@@ -16,6 +16,7 @@ Useful patterns
 ---------------
 
 - Cached computations: avoid repeated computations
+- Runtime rebasing of objects on reload
 - Hyperparameters should be explicit
 - Cross-validation should be built-in (not separate code)
 - Switchable components (e.g. nonlinearities, choice of optimisation function) should be modularised
