@@ -32,3 +32,15 @@ Model elements
 - slow modulator
 - parameterised priors
 - low-rank option
+
+
+Conventions
+-----------
+
+- The dimensionality of arrays is given through variable names, e.g. `X_td` is a (time x dimension) matrix; `y_t` is a (time) vector
+- `X` denotes stimulus to regress against
+- `y` denotes spike counts
+- `k` denotes the linear kernel
+- `F` denotes the output nonlinearity
+- `v` denotes the set of all parameters to be learned, given the current setting of the hyperparameters (`theta`). Note that since the current hyperparameters might induce a dimensionality reduction, the cardinality of `v` may be smaller than `k`.
+- `theta` denotes hyperparameters. These might be fixed in advance, or learned through cross-validation or evidence optimisation.
