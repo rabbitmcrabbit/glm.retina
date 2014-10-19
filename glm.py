@@ -241,16 +241,16 @@ Solver classes
 class Solver( AutoCR ):
 
     """ Superclass for GLM solvers.
-    
-    Optimisation over variable `v` takes place via the vector `v_vec`. This
-    includes any auxiliary variables that have to be optimised as well.
+
+    This should be subclassed to define certain structural priors over
+    the variables.
     
     """
 
     def __init__( self, data, initial_conditions=None, 
             testing_proportion=0, testing_block_size_smp=10,
             solve=False, announcer=None, verbose=True, verbose_cache=False, 
-            empty_copy=False, nonlinearity_h='exp', **kw ):
+            empty_copy=False, nonlinearity='exp', **kw ):
         """ Create a Solver object, for given data object, `data`.
         
         Keywords:
@@ -265,9 +265,9 @@ class Solver( AutoCR ):
         - `testing_block_size_smp` : max size of the contiguous blocks in
             the testing data set. 
 
-        - `nonlinearity_h` : the gain nonlinearity. Either 'exp' or 'soft'.
-            * 'exp'  :  mu_t = nu_t . exp( h_t )
-            * 'soft' :  mu_t = nu_t . log( 1 + exp(h_t) )
+        - `nonlinearity` : the output nonlinearity. Either 'exp' or 'soft'.
+            * 'exp'  :  mu_t = exp( z_t )
+            * 'soft' :  mu_t = log_2( 1 + exp( z_t ) )
 
         Verbosity:
 
@@ -290,13 +290,11 @@ class Solver( AutoCR ):
         self._define_training_and_testing_regions( 
                 testing_proportion=testing_proportion,
                 testing_block_size_smp=testing_block_size_smp )
-        # history
-        self._posterior_history = []
         # nonlinearity
-        if nonlinearity_h in ['exp', 'soft']:
-            self.nonlinearity_h = nonlinearity_h
+        if nonlinearity in ['exp', 'soft']:
+            self.nonlinearity = nonlinearity
         else:
-            raise ValueError("`nonlinearity_h` must be 'exp' or 'soft'")
+            raise ValueError("`nonlinearity` must be 'exp' or 'soft'")
         # initial conditions
         self._parse_initial_conditions( initial_conditions )
         self._reset()
@@ -307,13 +305,13 @@ class Solver( AutoCR ):
     """ Posterior objects """
 
     # by default, this is not a posterior, unless specified otherwise
-    _is_posterior = False
+    is_posterior = False
 
-    def _create_posterior( self, **kw ):
+    def create_posterior( self, **kw ):
         """ Create a posterior object of the same class as self. 
 
         This will place a copy of the current cache in the posterior, and
-        set the flag `_is_posterior` to be `True`. Any keywords provided will
+        set the flag `is_posterior` to be `True`. Any keywords provided will
         also be set as attributes; this will happen *first* so that it
         does not wipe the cache.
         
@@ -327,7 +325,7 @@ class Solver( AutoCR ):
         # create object
         p = self.__class__( data=None, empty_copy=True, announcer=announcer )
         # label it as a posterior object
-        p._is_posterior = True
+        p.is_posterior = True
         p.parent = parent
         # note the training
         p.training_slices = self.training_slices
@@ -354,7 +352,7 @@ class Solver( AutoCR ):
 
     def _clear_descendants( self, name ):
         """ Posteriors should be immutable. """
-        if self._is_posterior:
+        if self.is_posterior:
             for d in self._descendants.get( name, () ):
                 if self._cache.has_key( d ):
                     raise TypeError('cannot change the cache of a posterior')
@@ -377,117 +375,83 @@ class Solver( AutoCR ):
     =====================================
     """
     
-    def _check_variable_name( self, v ):
-        """ Check that the name `v` is of a valid variable. """
-        if v not in self._variable_names:
-            err_str = "invalid variable name: %s" 
-            raise ValueError( err_str % str(self._variable_names) )
-
-    def _Prior_v_class( self, v ):
-        """ Returns the superclass that defines the `Lv` or `Cv` method. """
-        self._check_variable_name( v )
+    def _Prior_class( self ):
+        """ Returns the superclass that defines the `L` or `C` method. """
         return [ c for c in self.__class__.mro() 
-                if c.__dict__.has_key('L'+v) or c.__dict__.has_key('C'+v) ][0]
+                if c.__dict__.has_key('L') or c.__dict__.has_key('C') ][0]
 
-    def _recast_theta_v( self, v, ic ):
-        """ Process results of previous solver to determine initial theta_v.
+    def _recast_theta( self, ic ):
+        """ Process results of previous solver to determine initial theta.
 
         Arguments:
-        - `v` : variable name
         - `ic` : previously solved version of model
         
-        Default: if initial conditions come from the same Prior_v class, then
-        inherit the fitted theta_v.
+        Default: if initial conditions come from the same Prior class, then
+        inherit the fitted theta.
         
         Subclass for additional behaviour.
 
         """
-        self._check_variable_name( v )
-        c1 = getattr( ic, '_Prior_%s_class' % v )
-        c2 = getattr( self, '_Prior_%s_class' % v )
+        c1 = ic._Prior_class
+        c2 = self._Prior_class
         if c1 == c2:
-            p = getattr( ic, 'posterior_' + v )
-            tv = getattr( p, 'theta_' + v )
+            p = ic.posterior
+            tv = ic.theta
             return tv
         else:
-            raise TypeError('subclass how to recast theta_%s from %s to %s ' % 
-                    ( v, c1.__name__, c2.__name__ ) )
+            err_str = 'subclass how to recast theta from %s to %s '
+            err_str = err_str % ( c1.__name__, c2.__name__ )
+            raise TypeError( err_str )
 
-    def _initialise_theta_v( self, v ):
-        """ If `theta_v` is not set, set it from initial conditions. """
-        self._check_variable_name( v )
-        if hasattr( self, 'theta_' + v ):
+    def initialise_theta( self ):
+        """ If `theta` is not set, set it from initial conditions. """
+        if hasattr( self, 'theta' ):
             return 
-        elif hasattr( self, 'posterior_' + v ):
-            p = getattr( self, 'posterior_' + v )
-            tv = getattr( p, 'theta_' + v )
-            setattr( self, 'theta_' + v, tv )
+        elif hasattr( self, 'posterior' ):
+            self.theta = self.posterior.theta
         else:
-            tv = getattr( self.initial_conditions, 'theta_' + v )
-            setattr( self, 'theta_' + v, tv )
+            self.theta = self.initial_conditions.theta
 
-    def _initialise_v_vec( self, v ):
-        """ If `v_vec` is not set (validly), set from initial conditions. """
-        #self._check_variable_name( v )
-        # check current value
-        if hasattr( self, v + '_vec' ):
-            vs = getattr( self, v + '_vec' )
-            if len( vs ) == getattr( self, '_required_%s_vec_length' % v ):
+    def initialise_v( self ):
+        """ If `v` is not set (validly), set from initial conditions. """
+        # check current value is a valid size
+        if hasattr( self, 'v' ):
+            v = self.v
+            if len( v ) == self.required_v_length
                 return
             else:
                 delattr( self, v + '_vec' )
-        # source
-        if hasattr( self, 'posterior_' + v ):
-            source = getattr( self, 'posterior_' + v )
+        # recast `v` from posterior or initial conditions
+        if hasattr( self, 'posterior' ):
+            self.v = self.reproject_to_v( posterior=self.posterior )
         else:
-            source = self.initial_conditions
-        # reproject
-        func = getattr( self, '_reproject_to_%s_vec' % v )
-        v_vec = func( posterior=source )
-        setattr( self, v + '_vec', v_vec )
+            self.v = self.reproject_to_v( posterior=self.initial_conditions )
     
-    def _reset_theta_v( self, v ):
-        """ Force reset of `theta_v`. """
-        self._check_variable_name( v )
-        if hasattr( self, 'theta_' + v ):
-            delattr( self, 'theta_' + v )
-        getattr( self, '_initialise_theta_' + v )()
+    def reset_theta( self ):
+        """ Force reset of `theta`. """
+        if hasattr( self, 'theta' ):
+            delattr( self, 'theta' )
+        self.initialise_theta()
 
-    def _reset_v_vec( self, v ):
-        """ Force reset of `v_vec`. """
-        #self._check_variable_name( v )
-        if hasattr( self, v + '_vec' ):
-            delattr( self, v + '_vec' )
-        getattr( self, '_initialise_%s_vec' % v )()
+    def reset_v( self ):
+        """ Force reset of `v`. """
+        if hasattr( self, 'v' )
+            delattr( self, 'v' )
+        self.initialise_v()
 
-    def _reset( self ):
+    def reset( self ):
         """ Sets the values of parameters to the initial conditions. """
-        vs = self._variable_names
         ic = self.initial_conditions
-        # delete what's there
-        for v in vs:
-            if hasattr( self, 'posterior_' + v ):
-                delattr( self, 'posterior_' + v )
+        # delete any posteriors
+        if hasattr( self, 'posterior' ):
+            delattr( self, 'posterior' )
         # reset hyperparameters
-        for v in vs:
-            getattr( self, '_reset_theta_' + v )()
+        self.reset_theta()
         # reset latent variables
-        for v in vs:
-            getattr( self, '_reset_%s_vec' % v )()
-        # set up posteriors
-        for v in vs:
-            kws = {}
-            kws[ 'theta_' + v ] = getattr( self, 'theta_' + v )
-            kws[ v + '_vec' ] = getattr( self, v + '_vec' )
-            p = self._create_posterior( **kws )
-            p.is_point_estimate = True
-            setattr( self, 'posterior_' + v, p )
-        for vi in vs:
-            pi = getattr( self, 'posterior_' + vi )
-            for vj in vs:
-                pj = getattr( self, 'posterior_' + vj )
-                if not (vi == vj):
-                    setattr( pi, 'posterior_'+vj, pj )
+        self.reset_v()
+        # initialise posterior
+        p = self.posterior = self.create_posterior( theta=self.theta, v=self.v )
+        p.is_point_estimate = True
 
 
     """
@@ -496,152 +460,141 @@ class Solver( AutoCR ):
     ===============================
     """
 
-    def _calc_posterior_v( self, v, xtol=None, ftol_per_obs=None, verbose=1 ):
-        """ Calculate posterior on variable v, via gradient descent. 
+    def calc_posterior( self, xtol=None, ftol_per_obs=None, verbose=1 ):
+        """ Calculate posterior on `v`, via gradient descent. 
 
         Tolerance is given in terms of two quantities:
         
-        - `xtol` : the desired precision in the value of `v_vec`. If this is 
-        not provided, it defaults to to `self.vtol` (for appropriate `v`), 
-        which might be defined in the class. Otherwise this defaults to 1e-8.  
+        - `xtol` : the desired precision in the value of `v`. If this is 
+        not provided, it defaults to to `self.xtol`, which might be defined 
+        in the class. Otherwise this defaults to 1e-8.  
 
-        - `ftol_per_obs` : the desired precision in the log posterior. If 
-        this is not provided, it defaults to `self.ftol_per_obs`, which must
-        be defined in the class. 
+        - `ftol_per_obs` : the desired precision in the log posterior, per
+        observation (i.e. per time bin). If this is not provided, it defaults 
+        to `self.ftol_per_obs`, which must be defined in the class. 
 
         """
-        # strings
-        vv = v + '_vec'
         # parse tolerance
         if xtol is None:
-            if hasattr( self, v+'tol' ):
-                xtol = getattr( self, v+'tol' )
+            if hasattr( self, 'xtol' ):
+                xtol = self.xtol
             else:
                 xtol = 1e-8
         if ftol_per_obs is None:
             ftol_per_obs = self.ftol_per_obs
         ftol = ftol_per_obs * self.N_observations
-        # verbosity
-        self._announcer.thresh_allow( verbose, 1, 'calc_posterior_' + v )
+        # parse verbosity
+        self._announcer.thresh_allow( verbose, 1, 'calc_posterior' )
         # functions to minimise
+        # (these are interface functions to the cacher)
         eq = np.array_equal
-        f = self.cfunction( eq, '_negLP_objective__' + v, vv )
-        df = self.cfunction( eq, '_negLP_jacobian__' + v, vv )
-        d2f = self.cfunction( eq, '_negLP_hessian__' + v, vv )
+        f = self.cfunction( eq, '_negLP_objective', 'v' )
+        df = self.cfunction( eq, '_negLP_jacobian', 'v' )
+        d2f = self.cfunction( eq, '_negLP_hessian', 'v' )
         # initialise starting value of v
-        getattr( self, '_initialise_%s_vec' % v )()
-        # reporting
-        def callback( v_vec, assess_convergence=True ):
-            self.csetattr( vv, v_vec )
-            f = getattr( self, '_negLP_callback__' + v )
-            f( prefix = 'calc_posterior_' + v )
+        self.initialise_v()
+        # reporting during each step
+        def callback( v, assess_convergence=True ):
+            # set the current value of `v` (if required)
+            self.csetattr( 'v', v )
+            # run the callback function
+            self._negLP_callback( prefix='calc_posterior' )
             # have we converged
             last_negLP = self._last_negLP
-            this_negLP = getattr( self, '_negLP_objective__' + v )
+            this_negLP = self._negLP_objective
             improvement = -(this_negLP - last_negLP)
+            # if we have converged, break out of the loop
             if assess_convergence and (improvement < ftol):
                 raise ConvergedUpToFtol()
             self._last_negLP = this_negLP
         # initial condition
-        v_vec_0 = getattr( self, vv )
+        v0 = self.v
         # if pre-optimisation is available, run it
-        preoptim_func = '_preoptimise_%s0_vec_for_LP_objective' % v
+        preoptim_func = '_preoptimise_v_for_LP_objective'
         if hasattr( self, preoptim_func ):
             preoptim_func = getattr( self, preoptim_func )
-            v_vec_0 = preoptim_func( v_vec_0 )
-        # initial announce
+            v0 = preoptim_func( v0 )
+        # initial announcement
         self._last_negLP = np.inf
-        callback( v_vec_0, assess_convergence=False )
+        callback( v0, assess_convergence=False )
         # solve
-        v_vec_hat = v_vec_0
-        last_LP = -f(v_vec_hat)
-        if not len(v_vec_hat) == 0:
+        v_hat = v0
+        last_LP = -f(v_hat)
+        if not len(v_hat) == 0:
             try:
-                v_vec_hat = fmin_ncg( f, v_vec_hat, df, fhess=d2f, 
+                v_hat = fmin_ncg( f, v_hat, df, fhess=d2f, 
                         disp=False, callback=callback, avextol=xtol )
             except ConvergedUpToFtol:
-                v_vec_hat = getattr( self, vv )
+                v_hat = self.v
         # create posterior object
-        self._create_and_save_posterior_v( v, v_vec_hat )
+        self.create_and_save_posterior( v_hat )
         # restore verbosity
-        self._announcer.thresh_allow(verbose, -np.inf, 'calc_posterior_' + v)
+        self._announcer.thresh_allow( verbose, -np.inf, 'calc_posterior' )
 
-    def _create_and_save_posterior_v( self, v, v_hat_vec ):
+    def create_and_save_posterior( self, v_hat ):
         # ensure we are set to the optimum
-        self.csetattr( v + '_vec', v_hat_vec )
+        self.csetattr( 'v', v_hat )
         # create posterior object
-        p_kws = {}
-        p_kws[ 'theta_' + v ] = getattr( self, 'theta_' + v )
-        p_kws[ v + '_vec' ] = v_hat_vec
-        for vi in [n for n in self._variable_names if n != v ]:
-            try:
-                p_kws[ 'posterior_' + vi ] = getattr(self, 'posterior_' + vi)
-            except AttributeError:
-                pass
-        p = self._create_posterior( **p_kws )
-        # save posterior object
-        setattr( self, 'posterior_' + v, p )
-        # again, ensure we are set to the optimum
-        p.csetattr( v + '_vec', v_hat_vec )
-        # make a note that we have done this
-        self._posterior_history.append(v)
+        p = self.posterior = self.create_posterior( theta=self.theta, v=v_hat )
+        # again, ensure that this posterior is set to the posterior mode
+        p.csetattr( 'v', v_hat )
 
-    def _get_next_theta_v_n( self, v, factr=1e10, ftol_per_obs=None ):
-        """ Single step for local evidence approx algorithm, for variable v.
+    def get_next_theta_n( self, factr=1e10, ftol_per_obs=None ):
+        """ Single step for local evidence approx algorithm.
 
         In the Park & Pillow (2012) approximation, one walks towards an
-        optimal `theta_h` by approximating the objective function near
-        `theta_h_n` as `psi(theta_h)`, then maximise this approx objective
-        function. The solution becomes the next `theta_h_n`. This method
+        optimal `theta` by approximating the objective function near
+        `theta_n` as `psi(theta)`, then maximise this approx objective
+        function. The solution becomes the next `theta_n`. This method
         performs one step in this optimisation procedure, finding, in effect
-        `theta_h_(n+1)` from `theta_h_(n)`.
+        `theta_(n+1)` from `theta_(n)`.
 
         Keywords:
 
         - `factr` : convergence factor for 'grad'-based optimisation
 
         """
-        # parse v
-        self._check_variable_name( v )
-        tv = 'theta_%s' % v
         # parse tolerance
         if ftol_per_obs is None:
             ftol_per_obs = self.ftol_per_obs
         ftol = ftol_per_obs * self.N_observations
         # functions to minimise
-        f = self.cfunction( np.array_equal, '_LE_objective__' + v, tv )
-        df = self.cfunction( np.array_equal, '_LE_jacobian__' + v, tv )
+        # (these are interface functions to the cacher)
+        f = self.cfunction( np.array_equal, '_LE_objective', 'theta' )
+        df = self.cfunction( np.array_equal, '_LE_jacobian', 'theta' )
         # a copy is necessary as fmin_l_bfgs_b makes changes in place
         g = lambda x: f( x.copy() )
         dg = lambda x: df( x.copy() )
-        # callback
-        def callback( theta_v, assess_convergence=True ):
-            # make sure theta_v is set
-            self.csetattr( tv, theta_v )
+        # reporting during each step
+        def callback( theta, assess_convergence=True ):
+            # set the current value of `theta` (if required)
+            self.csetattr( 'theta', theta )
             # have we converged
             last_LE = self._last_LE
-            this_LE = getattr( self, '_LE_objective__' + v )
+            this_LE = getattr( self, '_LE_objective' )
             improvement = -(this_LE - last_LE)
+            # if we have converged, break out of the loop
             if assess_convergence and (improvement < ftol):
                 raise ConvergedUpToFtol()
             self._last_LE = this_LE
-        # minimise
-        pv = getattr( self, 'posterior_' + v )
-        theta_v0 = getattr( pv, tv )
-        bounds_v = getattr( self, '_bounds_' + v )
-        self._last_LE = g(A(theta_v0)) #np.inf
+        # initial condition
+        theta0 = np.array( self.posterior.theta )
+        # boundary conditions
+        bounds = self.bounds_theta
+        self._last_LE = g( theta0 ) #np.inf
+        # run
         try:
-            theta_v = fmin_l_bfgs_b( 
-                    g, theta_v0, fprime=dg, approx_grad=False, bounds=bounds_v, 
+            theta = fmin_l_bfgs_b( 
+                    g, theta0, fprime=dg, approx_grad=False, bounds=bounds, 
                     factr=factr, disp=False, callback=callback )[0]
         except ConvergedUpToFtol:
-            theta_v = getattr( self, tv )
+            theta = self.theta
         # save
         g(theta_v)
 
-    def _solve_theta_v( self, v, grid_search=False, ftol_per_obs=None, 
+    def solve_theta( self, grid_search=False, ftol_per_obs=None, 
             max_iterations=10, verbose=1, **kw ):
-        """ Optimise for `theta_v` by maximum marginal likelihood. 
+        """ Optimise for `theta` by maximum marginal likelihood. 
         
         Convergence is measured by `ftol_per_obs`. This is multiplied by
         `self.N_observations` to give a step improvement criterion for 
@@ -649,53 +602,48 @@ class Solver( AutoCR ):
         if not provided.
         
         """
-        # variable names
-        N_theta_v = getattr( self, 'N_theta_' + v )
+        # how many hyperparameters are we optimising over
+        N_theta = self.N_theta
         # parse tolerance
         if ftol_per_obs is None:
             ftol_per_obs = self.ftol_per_obs
         # do we actually have a theta_v to solve
         if N_theta_v == 0:
             return
-        # verbosity
-        self._announcer.thresh_allow( verbose, 1, 'solve_theta_' + v )
-        self._announcer.thresh_allow( verbose, 2, 'calc_posterior_' + v )
-        a_pre = 'solve_theta_' + v
+        # parse verbosity
+        self._announcer.thresh_allow( verbose, 1, 'solve_theta' )
+        self._announcer.thresh_allow( verbose, 2, 'calc_posterior' )
         # initialise
-        getattr( self, '_initialise_theta_' + v )()
+        self.initialise_theta()
         best_evidence = -np.inf
         best_posterior = None
         # calculate posterior
-        getattr( self, 'calc_posterior_' + v )( verbose=None, **kw )
+        self.calc_posterior( verbose=None, **kw )
         # current value
-        if hasattr(self, 'posterior_' + v):
+        if hasattr(self, 'posterior' ):
             try:
-                best_posterior = getattr( self, 'posterior_' + v )
-                best_evidence = getattr( best_posterior, 'evidence__' + v )
-                announce_str = 'evidence_%s existing:     %.3f' 
-                announce_str = announce_str % (v, best_evidence)
-                self.announce( announce_str, prefix=a_pre )
+                best_posterior = self.posterior
+                best_evidence = self.posterior.evidence
+                announce_str = 'evidence existing:     %.3f' % best_evidence
+                self.announce( announce_str, prefix='solve_theta' )
             except (AttributeError, np.linalg.LinAlgError):
                 pass
         # check that we can actually grid search
-        grid_search = ( grid_search and 
-                getattr( self, '_grid_search_theta_%s_available' % v ) )
-
+        grid_search = ( grid_search and self.grid_search_theta_available )
         # initial conditions: grid search
         if grid_search:
             # announce
-            self.announce( 'theta_%s grid search starting' % v, prefix=a_pre )
+            self.announce( 'theta grid search starting', prefix='solve_theta' )
             # construct grid searching object
-            grid_kws = getattr( 
-                    self, '_grid_search_theta_%s_parameters' % v).copy()
+            grid_kws = self.grid_search_theta_parameters.copy()
             grid_kws.update( **kw )
             gs = GridSearcher( **grid_kws )
             # run through the grid search
             while not gs.is_finished:
-                # current theta_v value
-                tv = gs.current_theta
-                setattr( self, 'theta_' + v, tv )
-                # set the initial value of v_vec
+                # current theta value
+                theta = gs.current_theta
+                self.theta = theta
+                # set the initial value of v
                 if best_posterior is not None:
                     reproject_func = getattr(self, '_reproject_to_%s_vec' % v)
                     projected_v_vec = reproject_func(posterior=best_posterior)
@@ -721,11 +669,11 @@ class Solver( AutoCR ):
                     best_evidence = this_evidence
                     announce_str += '    *'
                 # announce
-                self.announce( announce_str, prefix=a_pre )
+                self.announce( announce_str, prefix='solve_theta' )
                 # continue
                 gs.next( this_evidence )
             # we are finished grid search
-            self.announce( 'theta_%s grid search finished' % v, prefix=a_pre )
+            self.announce( 'theta grid search finished', prefix='solve_theta' )
 
         # initial conditions: current value of theta_v
         elif ( hasattr( self, 'posterior_' + v ) and 
@@ -741,7 +689,7 @@ class Solver( AutoCR ):
                 
         # announce the evidence
         announce_str = 'evidence_%s initial:     %.3f' % (v, best_evidence)
-        self.announce( announce_str, prefix=a_pre )
+        self.announce( announce_str, prefix='solve_theta' )
         # save the posterior
         setattr( self, 'posterior_' + v, best_posterior )
 
@@ -1132,7 +1080,7 @@ class Solver( AutoCR ):
             if getattr( self.__class__, k ).settable:
                 d['_cache'][k] = self._cache[k]
         # get rid of undesirables
-        if self._is_posterior:
+        if self.is_posterior:
             d['parent'] = None
         keys_to_del = ['_data']
         for k in keys_to_del:
@@ -1506,7 +1454,7 @@ class UnitSolver( Solver ):
         return np.sum( dims_h )
 
     @cached
-    def _required_h_vec_length( T_star ):
+    def required_h_vec_length( T_star ):
         return T_star
 
     @cached
@@ -1781,8 +1729,8 @@ class UnitSolver( Solver ):
     """
 
     @cached
-    def Lambdainv_h_vec( _negLP_hessian__h, _is_posterior ):
-        if not _is_posterior:
+    def Lambdainv_h_vec( _negLP_hessian__h, is_posterior ):
+        if not is_posterior:
             raise TypeError('attribute only available for `h` posterior.')
         return _negLP_hessian__h
 
@@ -1845,11 +1793,11 @@ class UnitSolver( Solver ):
 
     @cached
     def E_star__h( mu__h, resid__h, dFh_on_Fh, d2Fh_on_Fh, dims_h, 
-            posterior_k, _is_posterior, nonlinearity_h, data,
+            posterior_k, is_posterior, nonlinearity_h, data,
             _zero_during_testing ):
         """ Hessian of neg log likelihood, for local evidence approx """
         import sandwich
-        if not _is_posterior:
+        if not is_posterior:
             raise TypeError('attribute only available for `h` posterior.')
         # construct hessian of neg log likelihood
         if nonlinearity_h == 'exp':
@@ -2116,7 +2064,7 @@ class UnitSolver( Solver ):
         return np.sum( dims_k )
 
     @cached
-    def _required_k_vec_length( D_star ):
+    def required_k_vec_length( D_star ):
         return D_star
 
     @cached
@@ -2298,8 +2246,8 @@ class UnitSolver( Solver ):
     """
     
     @cached
-    def Lambdainv_k_vec( _negLP_hessian__k, _is_posterior ):
-        if not _is_posterior:
+    def Lambdainv_k_vec( _negLP_hessian__k, is_posterior ):
+        if not is_posterior:
             raise TypeError('attribute only available for `k` posterior.')
         return _negLP_hessian__k
 
@@ -2366,9 +2314,9 @@ class UnitSolver( Solver ):
         return np.sum( evidence_components__k )
 
     @cached
-    def E_star__k( X_star, mu__k, _is_posterior ):
+    def E_star__k( X_star, mu__k, is_posterior ):
         """ Hessian of neg log likelihood, for local evidence approx """
-        if not _is_posterior:
+        if not is_posterior:
             raise TypeError('attribute only available for `k` posterior.')
         return dot( X_star.T, mu__k[:, na] * X_star )
 
@@ -2700,10 +2648,10 @@ class UnitSolver( Solver ):
         return self._calc_posterior_v( 'k', **kw )
 
     def get_next_theta_h_n( self, **kw ):
-        return self._get_next_theta_v_n( 'h', **kw )
+        return self.get_next_theta_v_n( 'h', **kw )
 
     def get_next_theta_k_n( self, **kw ):
-        return self._get_next_theta_v_n( 'k', **kw )
+        return self.get_next_theta_v_n( 'k', **kw )
 
     def solve_theta_k( self, **kw ):
         return self._solve_theta_v( 'k', **kw )
@@ -3230,11 +3178,11 @@ class Lowpass_Gaussian_h( Prior_h ):
         from scipy.optimize import fmin
         def f(s):
             self.theta_h = [ s, 0 ]
-            return ( self._required_h_vec_length - self._max_len_h_star ) ** 2
+            return ( self.required_h_vec_length - self._max_len_h_star ) ** 2
         smax = fmin( f, -np.log(self.T), disp=0 )
         def f(s):
             self.theta_h = [ s, 0 ]
-            return ( self._required_h_vec_length - 1 ) ** 2
+            return ( self.required_h_vec_length - 1 ) ** 2
         smin = fmin( f, -np.log(self.T), disp=0 )
         return [ (smin[0], smax[0]), (-40, 20) ]
 
@@ -3362,7 +3310,7 @@ class Poisson_h( Prior_h ):
                 p_kws[ 'posterior_' + vi ] = getattr(self, 'posterior_' + vi)
             except AttributeError:
                 pass
-        p = self._create_posterior( **p_kws )
+        p = self.create_posterior( **p_kws )
         # save posterior object
         setattr( self, 'posterior_h', p )
         # save the value of h_vec
