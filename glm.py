@@ -287,7 +287,7 @@ class Solver( AutoCR ):
         # save data
         self._data = data
         # define training and testing regions of the data
-        self._define_training_and_testing_regions( 
+        self.define_training_and_testing_regions( 
                 testing_proportion=testing_proportion,
                 testing_block_size_smp=testing_block_size_smp )
         # nonlinearity
@@ -630,33 +630,32 @@ class Solver( AutoCR ):
                 pass
         # check that we can actually grid search
         grid_search = ( grid_search and self.grid_search_theta_available )
-        # initial conditions: grid search
+
+        # case 1: set initial conditions by grid search
         if grid_search:
             # announce
             self.announce( 'theta grid search starting', prefix='solve_theta' )
-            # construct grid searching object
+            # construct grid searching object, `gs`
             grid_kws = self.grid_search_theta_parameters.copy()
             grid_kws.update( **kw )
             gs = GridSearcher( **grid_kws )
             # run through the grid search
             while not gs.is_finished:
-                # current theta value
+                # current `theta` value
                 theta = gs.current_theta
                 self.theta = theta
-                # set the initial value of v
+                # set the initial value of `v`
                 if best_posterior is not None:
-                    reproject_func = getattr(self, '_reproject_to_%s_vec' % v)
-                    projected_v_vec = reproject_func(posterior=best_posterior)
-                    setattr( self, '%s_vec' % v, projected_v_vec )
-                # calculate posterior
-                getattr( self, 'calc_posterior_' + v )( verbose=None, **kw )
-                p = getattr( self, 'posterior_' + v )
-                # evaluate the evidence
-                this_evidence = getattr( p, 'evidence__' + v )
+                    self.v = self.reproject_to_v( posterior=best_posterior )
+                # calculate posterior on `v` for this `theta`
+                self.calc_posterior( verbose=None, **kw )
+                p = self.posterior
+                # evaluate the evidence for this `theta`
+                this_evidence = self.posterior.evidence
                 # prepare announcement
                 announce_str = 'grid search [%d/%d]: ('
                 announce_str = announce_str % (gs.current_count, gs.max_count)
-                announce_str += ('%d,' * len(tv))
+                announce_str += ('%d,' * len(theta))
                 announce_str = announce_str[:-1] + ')'
                 announce_str = announce_str % tuple(tv)
                 max_len = 30 + 2*len(tv)
@@ -675,41 +674,40 @@ class Solver( AutoCR ):
             # we are finished grid search
             self.announce( 'theta grid search finished', prefix='solve_theta' )
 
-        # initial conditions: current value of theta_v
-        elif ( hasattr( self, 'posterior_' + v ) and 
-                np.array_equal( 
-                    getattr( getattr(self, 'posterior_' + v), 'theta_' + v ), 
-                    getattr( self, 'theta_' + v ) ) ):
+        # case 2: initial condition is current `theta`
+        elif ( hasattr( self, 'posterior' ) and 
+                np.array_equal( self.posterior.theta, self.theta ) ):
             pass
 
+        # case 3: calculate
         else:
-            getattr( self, 'calc_posterior_' + v )( verbose=None, **kw )
-            best_posterior = getattr( self, 'posterior_' + v )
-            best_evidence = getattr( best_posterior, 'evidence__' + v )
+            self.calc_posterior( verbose=None, **kw )
+            best_posterior = self.posterior
+            best_evidence = best_posterior.evidence
                 
         # announce the evidence
-        announce_str = 'evidence_%s initial:     %.3f' % (v, best_evidence)
+        announce_str = 'evidence initial:     %.3f' % best_evidence
         self.announce( announce_str, prefix='solve_theta' )
         # save the posterior
-        setattr( self, 'posterior_' + v, best_posterior )
+        self.posterior = best_posterior
 
         # solve: cycle of maximising local LE
         for i in range( max_iterations ):
             # optimise local evidence
-            getattr( self, 'get_next_theta_%s_n' % v )()
-            new_theta_v = getattr( self, 'theta_' + v )
-            # check that theta_v has changed
-            old_theta_v = getattr(getattr( self, 'posterior_'+v ), 'theta_'+v)
-            if np.array_equal( new_theta_v, old_theta_v ):
+            self.get_next_theta_n()
+            new_theta = self.theta
+            # check that theta has changed
+            old_theta = self.posterior.theta
+            if np.array_equal( new_theta, old_theta ):
                 break
             # calculate posterior here
-            getattr( self, 'calc_posterior_' + v )( verbose=None, **kw )
+            self.calc_posterior( verbose=None, **kw )
             # evaluate evidence here
-            new_posterior = getattr( self, 'posterior_' + v )
-            new_evidence = getattr( new_posterior, 'evidence__' + v )
+            new_posterior = self.posterior
+            new_evidence = self.posterior.evidence
             # report progress
-            announce_str = 'evidence_%s iteration %d: %.3f' 
-            self.announce( announce_str % (v, i, new_evidence), prefix=a_pre )
+            announce_str = 'evidence iteration %d: %.3f' % ( i, new_evidence )
+            self.announce( announce_str, prefix='solve_theta' )
             # if we have made an improvement, keep it
             evidence_improvement = new_evidence - best_evidence
             if evidence_improvement > 0:
@@ -717,25 +715,25 @@ class Solver( AutoCR ):
                 best_evidence = new_evidence
             # if the improvement has been negative, restore, then end
             if evidence_improvement < 0:
-                setattr( self, 'posterior_' + v, best_posterior )
-                new_theta_v = getattr( best_posterior, 'theta_'+v )
-                self.csetattr( 'theta_'+v, new_theta_v )
-                new_v_vec = getattr( best_posterior, v+'_vec' )
-                self.csetattr( v+'_vec', new_v_vec )
+                self.posterior = best_posterior
+                new_theta = best_posterior.theta
+                new_v = best_posterior.v
+                self.csetattr( 'theta', new_theta )
+                self.csetattr( 'v', new_v )
                 break
             # if the improvement has been too small, end here
             if evidence_improvement < (ftol_per_obs * self.N_observations):
-                setattr( self, 'posterior_' + v, best_posterior )
+                self.posterior = best_posterior
                 break
 
         # announce the evidence
-        announce_str = 'evidence_%s final:       %.3f' 
-        self.announce( announce_str % (v, best_evidence), prefix=a_pre )
+        announce_str = 'evidence final:       %.3f' % best_evidence
+        self.announce( announce_str, prefix='solve_theta' )
         if best_evidence < -1e10:
             tracer()
         # restore verbosity
         self._announcer.thresh_allow( 
-                verbose, -np.inf, 'solve_theta_' + v, 'calc_posterior_' + v )
+                verbose, -np.inf, 'solve_theta', 'calc_posterior' )
 
     def solve(self):
         """ Solve for parameters and hyperparameters. Define in subclass. """
@@ -748,11 +746,6 @@ class Solver( AutoCR ):
         """ Number of time bins. """
         return data.T
 
-    @property
-    def pad_size( self ):
-        """ How big should the padding of latent modulators be. """
-        return (self.T // 2) 
-
     @cached
     def D( data ):
         """ Dimensionality of the stimulus. """
@@ -764,7 +757,7 @@ class Solver( AutoCR ):
     ================
     """
     
-    def _define_training_and_testing_regions( 
+    def define_training_and_testing_regions( 
             self, testing_proportion, testing_block_size_smp ):
         """ Partitions the data for cross-validation. 
         
@@ -772,6 +765,7 @@ class Solver( AutoCR ):
 
         - `testing_proportion` : how much of the data to put aside for
             testing purposes. Should be between 0 and 0.4 (recommended: 0.2)
+
         - `testing_block_size_smp` : max size of the contiguous blocks in
             the testing data set. 
         
@@ -870,7 +864,7 @@ class Solver( AutoCR ):
     def T_testing( testing_slices ):
         return int(sum([ s.stop - s.start for s in testing_slices ]))
 
-    def _slice_by_training( self, sig ):
+    def slice_by_training( self, sig ):
         """ Retrieves the training slices of a signal. """
         if not self.has_testing_regions:
             return sig
@@ -884,7 +878,7 @@ class Solver( AutoCR ):
             count += s_len
         return new_sig
 
-    def _slice_by_testing( self, sig ):
+    def slice_by_testing( self, sig ):
         """ Retrieves the testing slices of a signal. """
         if not self.has_testing_regions:
             return A([])
@@ -898,7 +892,7 @@ class Solver( AutoCR ):
             count += s_len
         return new_sig
 
-    def _zero_during_testing( self, sig ):
+    def zero_during_testing( self, sig ):
         """ Sets the signal components during testing regions to be zero. """
         if not self.has_testing_regions:
             return sig
@@ -913,15 +907,15 @@ class Solver( AutoCR ):
     ===================
     """
     
-    def _check_LP_derivatives__v( self, v, eps=1e-6, debug=False, 
+    def check_LP_derivatives( self, eps=1e-6, debug=False, 
             error_if_fail=False, error_threshold=0.05 ):
-        """ Check derivatives of the log posterior method wrt variable v.
+        """ Check derivatives of the log posterior.
 
         For both the Jacobian and Hessian, evaluates the analytic derivatives
-        provided by the respective attributes `_negLP_jacobian__v` and 
-        `_negLP_hessian__v`, and compares with empirical values, obtained 
-        from finite differences method on `_negLP_objective__v` and 
-        `_negLP_jacobian__v` respectively.
+        provided by the respective attributes `_negLP_jacobian` and 
+        `_negLP_hessian`, and compares with empirical values, obtained 
+        from finite differences method on `_negLP_objective` and 
+        `_negLP_jacobian` respectively.
 
         Typically, this prints out the size of the error between analytic
         and empirical estimates, as a norm. For example, for the Jacobian 
@@ -929,8 +923,8 @@ class Solver( AutoCR ):
         norm(aJ - eJ) / norm(aJ). If required, a ValueError can be thrown
         if the deviation is too large.
 
-        This tests the derivatives at the current value of `theta_v` and 
-        `v_vec`.
+        This tests the derivatives at the current value of the 
+        hyperparameters `theta` and the parameters `v`.
         
         Keywords on testing procedure:
 
@@ -945,78 +939,74 @@ class Solver( AutoCR ):
             if the relative deviation is greater than this value.
         
         """
-        # parse v
-        #self._check_variable_name( v )
-        vv = v + '_vec'
-        f_str = '_negLP_objective__' + v
-        df_str = '_negLP_jacobian__' + v
-        d2f_str = '_negLP_hessian__' + v
         # check that we are not at a posterior mode
-        if hasattr( self, 'posterior_' + v ):
-            p = getattr( self, 'posterior_' + v )
+        if hasattr( self, 'posterior' ):
+            p = self.posterior
             eq = np.array_equal
-            same_theta = eq(getattr(self, 'theta_'+v), getattr(p, 'theta_'+v))
-            same_vs = eq( getattr(self, vv), getattr(p, vv) )
-            if same_theta and same_vs:
+            same_theta = eq( self.theta, p.theta )
+            same_v = eq( self.v, p.v )
+            if same_theta and same_v:
                 err_str = ( 'LP checking cannot run at a posterior mode; ' +
-                        'try changing %s to something else' % vv )
+                        'try changing `v` to something else' )
                 raise ValueError(err_str)
         # initial conditions
-        v_vec_0 = getattr( self, vv )
-        N_v_vec = len( v_vec_0 )
-        # helper function
+        v0 = self.v
+        N_v = len( v0 )
+        # helper function: a step along coordinate `i`
         def dv(i):
-            z = zeros( N_v_vec )
+            z = zeros( N_v )
             z[i] = eps
             return z
-        # JACOBIAN
-        # evaluate analytic
-        setattr( self, vv, v_vec_0 )
-        LP = getattr( self, f_str )
-        dLP = getattr( self, df_str )
-        # evaluate empirical
-        edLP = np.zeros( N_v_vec )
-        for i in progress.dots( range(N_v_vec), 'empirical jacobian' ):
-            setattr( self, vv, v_vec_0 + dv(i) )
-            edLP[i] = ( getattr( self, f_str ) - LP ) / eps
+        # *** JACOBIAN ***
+        # evaluate analytic jacobian
+        self.v = v0
+        LP = self._negLP_objective
+        dLP = self._negLP_jacobian
+        # evaluate empirical jacobian
+        edLP = np.zeros( N_v )
+        for i in progress.dots( range(N_v), 'empirical jacobian' ):
+            self.v = v0 + dv(i)
+            edLP[i] = ( self._negLP_objective - LP ) / eps
+        # restore `v`
+        self.v = v0
         # print
         err1 = norm( dLP - edLP ) / norm( dLP )
         print ' '
         print 'dLP norm deviation : %.6f' % err1
         print ' '
-        setattr( self, vv, v_vec_0 )
         # raise error?
         if error_if_fail and (err1 > error_threshold):
-            raise ValueError('Jacobian of LP_%s failed at %.6f' % (v, err1) )
+            raise ValueError('Jacobian of LP failed at %.6f' % err1 )
         # HESSIAN
         # evaluate analytic
-        d2LP = getattr( self, d2f_str )
+        d2LP = self._negLP_hessian
         # evaluate empirical
         def empirical_d2LP(i):
-            setattr( self, vv, v_vec_0 + dv(i) )
-            return ( getattr( self, df_str ) - dLP ) / eps
+            self.v = v0 + dv(i)
+            return ( self._negLP_jacobian - dLP ) / eps
         ed2LP = A([ empirical_d2LP(i) 
-            for i in progress.dots( range(N_v_vec), 'empirical hessian' ) ])
+            for i in progress.dots( range(N_v), 'empirical hessian' ) ])
+        # restore
+        self.v = v0
         # print
         err2 = norm( d2LP - ed2LP ) / norm( d2LP )
         print ' '
         print 'd2LP norm deviation: %.6f' % err2
         print ' '
-        setattr( self, vv, v_vec_0 )
         # raise error?
         if error_if_fail and (err2 > error_threshold):
-            raise ValueError('Hessian of LPh failed at %.6f' % err1 )
+            raise ValueError('Hessian of LP failed at %.6f' % err1 )
         # debug
         if debug:
             tracer()
 
-    def _check_LE_derivatives__v( self, v, eps=1e-6, debug=False, 
+    def check_LE_derivatives( self, eps=1e-6, debug=False, 
             error_if_fail=False, error_threshold=0.05, **kw ):
-        """ Check derivatives of the local evidence wrt theta_v.
+        """ Check derivatives of the local evidence wrt `theta`.
         
         For the Jacobian, evaluates the analytic derivatives provided by
-        the attribute `_LE_jacobian__v` and compares these with the empirical
-        values, obtained from finite differences method on `_LE_objective__v`.
+        the attribute `_LE_jacobian` and compares these with the empirical
+        values, obtained from finite differences method on `_LE_objective`.
 
         Typically, this prints out the size of the error between analytic (aJ)
         and empirical estimates (eJ), as a norm. In particular, this computes 
@@ -1036,28 +1026,24 @@ class Solver( AutoCR ):
             if the relative deviation is greater than this value.
         
         """
-        # parse v
-        self._check_variable_name( v )
-        tv_str = 'theta_' + v
-        f_str = '_LE_objective__' + v
-        df_str = '_LE_jacobian__' + v
-        N_theta_v = getattr( self, 'N_theta_' + v )
+        N_theta = self.N_theta
         # evaluate analytic
-        LE = getattr( self, f_str )
-        a = dLE = getattr( self, df_str )
+        LE = self._LE_objective
+        a = dLE = self._LE_jacobian
         # evaluate empirical
-        theta_v0 = getattr( self, tv_str )
-        e = edLE = np.zeros( N_theta_v )
-        for i in range( N_theta_v ):
-            setattr( self, tv_str, A(theta_v0).astype(float) )
-            getattr( self, tv_str )[i] += eps
-            edLE[i] = ( getattr( self, f_str ) - LE) / eps
+        theta_v0 = np.array( self.theta ).astype(float)
+        e = edLE = np.zeros( N_theta )
+        for i in range( N_theta ):
+            theta_v = theta_v0.copy()
+            theta_v[i] += eps
+            self.theta_v = theta_v
+            edLE[i] = ( self._LE_objective - LE) / eps
         # check Jacobian
         a[ np.abs(a) < 1e-20 ] = 1e-20
         e[ np.abs(e) < 1e-20 ] = 1e-20
         err1 = np.nanmax( np.abs( (a-e)/e ) )
         err2 = norm( a - e ) / norm( e )
-        print 'LE_jacobian__%s : ' % v
+        print 'LE_jacobian : '
         print ' '
         print '   max deviation : %.6f ' % err1
         print '   norm deviation : %.6f ' % err2
@@ -1065,7 +1051,7 @@ class Solver( AutoCR ):
         sys.stdout.flush()
         # raise error?
         if error_if_fail and (err2 > error_threshold):
-            raise ValueError('Jacobian of LE_%s failed at %.6f' % (v, err2) )
+            raise ValueError('Jacobian of LE failed at %.6f' % err2 )
         # debug
         if debug:
             tracer()
@@ -1075,7 +1061,7 @@ class Solver( AutoCR ):
     def __getstate__( self ):
         """ For pickling, remove `data` and some baggage. """
         d = super( Solver, self ).__getstate__()
-        # readd the settable cache attributes
+        # re-add the settable cache attributes
         for k in self._cache.keys():
             if getattr( self.__class__, k ).settable:
                 d['_cache'][k] = self._cache[k]
@@ -1585,12 +1571,12 @@ class UnitSolver( Solver ):
         return log_g + posterior_k.expected_log_FXk
 
     @cached
-    def y_training( data, _slice_by_training ):
-        return _slice_by_training( data.y )
+    def y_training( data, slice_by_training ):
+        return slice_by_training( data.y )
 
     @cached
-    def LL_training__h( y_training, _slice_by_training, mu__h, log_mu__h ):
-        s = _slice_by_training
+    def LL_training__h( y_training, slice_by_training, mu__h, log_mu__h ):
+        s = slice_by_training
         mu, log_mu = s(mu__h), s(log_mu__h)
         return -np.sum( mu ) + dot( y_training, log_mu )
 
@@ -1607,8 +1593,8 @@ class UnitSolver( Solver ):
     """ Jacobian """
 
     @cached
-    def resid__h( mu__h, data, _zero_during_testing ):
-        return _zero_during_testing( data.y - mu__h )
+    def resid__h( mu__h, data, zero_during_testing ):
+        return zero_during_testing( data.y - mu__h )
 
     @cached
     def dLL_training__h( resid__h, dFh_on_Fh, dims_h, collapse_h ):
@@ -1629,14 +1615,14 @@ class UnitSolver( Solver ):
 
     @cached
     def d2LP_training__h( mu__h, resid__h, dims_h, T_star, Lhinv_star, 
-            _zero_during_testing, data, dFh_on_Fh, d2Fh_on_Fh, nonlinearity_h ):
+            zero_during_testing, data, dFh_on_Fh, d2Fh_on_Fh, nonlinearity_h ):
         """ Hessian of training log prob wrt `h_vec`. """
         import sandwich
         if nonlinearity_h == 'exp':
             d2LL = -mu__h
         else:
             d2LL = resid__h * d2Fh_on_Fh - data.y * ( dFh_on_Fh ** 2 )
-        d2LL = _zero_during_testing( d2LL )
+        d2LL = zero_during_testing( d2LL )
         d2LL_zero_padded = np.hstack([ d2LL, np.zeros_like(d2LL) ])
         yy = np.fft.fft( d2LL_zero_padded )
         F = ( np.sum(dims_h) - 1 ) / 2
@@ -1794,7 +1780,7 @@ class UnitSolver( Solver ):
     @cached
     def E_star__h( mu__h, resid__h, dFh_on_Fh, d2Fh_on_Fh, dims_h, 
             posterior_k, is_posterior, nonlinearity_h, data,
-            _zero_during_testing ):
+            zero_during_testing ):
         """ Hessian of neg log likelihood, for local evidence approx """
         import sandwich
         if not is_posterior:
@@ -1804,7 +1790,7 @@ class UnitSolver( Solver ):
             neg_d2LL_n = mu__h
         else:
             neg_d2LL_n = -resid__h * d2Fh_on_Fh + data.y * ( dFh_on_Fh ** 2 )
-        neg_d2LL_n = _zero_during_testing( neg_d2LL_n )
+        neg_d2LL_n = zero_during_testing( neg_d2LL_n )
         neg_d2LL_n_zero_padded = np.hstack([ neg_d2LL_n, np.zeros_like(neg_d2LL_n) ])
         yy = np.fft.fft( neg_d2LL_n_zero_padded )
         F = ( np.sum( dims_h ) - 1 ) / 2
@@ -1948,10 +1934,10 @@ class UnitSolver( Solver ):
 
     @cached
     def local_evidence_components__h( Lh_c_plus, E_n_plus__h, T_plus, h_c_plus, 
-            log_g_c, mu_c__h, y_training, h_c, _slice_by_training, posterior_k ):
+            log_g_c, mu_c__h, y_training, h_c, slice_by_training, posterior_k ):
         # log likelihood
-        mu = _slice_by_training( mu_c__h )
-        log_mu = _slice_by_training( log_g_c + posterior_k.expected_log_FXk )
+        mu = slice_by_training( mu_c__h )
+        log_mu = slice_by_training( log_g_c + posterior_k.expected_log_FXk )
         LL = -np.sum( mu ) + dot( y_training, log_mu )
         if len( h_c_plus ) == 0:
             return LL
@@ -1973,14 +1959,14 @@ class UnitSolver( Solver ):
     @cached( cskip = [
         ('nonlinearity_h', 'exp', ['Fh_c', 'dFh_c']) ] )
     def _LE_jacobian__h( dLh_dtheta, N_theta_h, dims_h_c, data, mu_c__h,
-            _zero_during_testing, collapse_h, Lh_c_plus, E_n_plus__h,
+            zero_during_testing, collapse_h, Lh_c_plus, E_n_plus__h,
             Lambda_c_plus__h, Lambdainv_c_plus__h, h_c_plus,
             nonlinearity_h, dFh_c, Fh_c ):
         # project to +-space
         dLh_dtheta_plus = [ dLhi[dims_h_c] for dLhi in dLh_dtheta ]
         # residuals at candidate solution
         resid = data.y - mu_c__h
-        resid = _zero_during_testing( resid ) # only training data
+        resid = zero_during_testing( resid ) # only training data
         # intermediate quantities ( all in +-space )
         if nonlinearity_h == 'exp':
             dLL_dh_c = collapse_h( resid, dims_h_c, padding='zero' )
@@ -2158,8 +2144,8 @@ class UnitSolver( Solver ):
         return posterior_h.expected_log_g + log_FXk
 
     @cached
-    def LL_training__k( y_training, _slice_by_training, mu__k, log_mu__k ):
-        s = _slice_by_training
+    def LL_training__k( y_training, slice_by_training, mu__k, log_mu__k ):
+        s = slice_by_training
         mu, log_mu = s(mu__k), s(log_mu__k)
         return -np.sum( mu ) + dot( y_training, log_mu )
 
@@ -2176,8 +2162,8 @@ class UnitSolver( Solver ):
     """ Jacobian """
 
     @cached
-    def resid__k( mu__k, data, _zero_during_testing ):
-        return _zero_during_testing( data.y - mu__k )
+    def resid__k( mu__k, data, zero_during_testing ):
+        return zero_during_testing( data.y - mu__k )
 
     @cached
     def dLL_training__k( resid__k, X_star ):
@@ -2196,11 +2182,11 @@ class UnitSolver( Solver ):
     """ Hessian """
 
     @cached
-    def d2LP_training__k( mu__k, D_star, _slice_by_training,
+    def d2LP_training__k( mu__k, D_star, slice_by_training,
             y_training, X_star, Lkinv_star ):
         """ Hessian of training log prob wrt `k_vec`. """
         # training data only
-        s = _slice_by_training
+        s = slice_by_training
         y = y_training
         mu, X_star = s(mu__k), s(X_star)
         # evaluate d2LL
@@ -2521,11 +2507,11 @@ class UnitSolver( Solver ):
     """ Local evidence at candidate theta """
 
     @cached
-    def local_evidence_components__k( mu_c__k, _slice_by_training, log_FXk_c,
+    def local_evidence_components__k( mu_c__k, slice_by_training, log_FXk_c,
             y_training, Lk_c_plus, E_n_plus__k, D_plus, k_c_plus, posterior_h ):
         # log likelihood
-        mu = _slice_by_training( mu_c__k )
-        log_mu = _slice_by_training( log_FXk_c + posterior_h.expected_log_g )
+        mu = slice_by_training( mu_c__k )
+        log_mu = slice_by_training( log_FXk_c + posterior_h.expected_log_g )
         LL = -np.sum( mu ) + dot( y_training, log_mu )
         if ~np.isfinite( LL ):
             return -np.inf
@@ -2551,7 +2537,7 @@ class UnitSolver( Solver ):
         ('Ck_is_diagonal', False, ['dLk_dtheta']) ])
     def _LE_jacobian__k( Ck_is_diagonal, second_dr_k, 
             posterior_k, dCk_dtheta, dLk_dtheta, Rk_c_star, data, mu_c__k,
-            X_plus, _slice_by_training, Ck_c_plus, E_n_plus__k,
+            X_plus, slice_by_training, Ck_c_plus, E_n_plus__k,
             Lambda_c_plus__k, Ckinv_c_plus, k_c_plus, dims_k_c_star,
             Lk_c_plus, N_theta_k, Lambdainv_c_plus__k ):
         # convenience
@@ -2570,9 +2556,9 @@ class UnitSolver( Solver ):
                 dLk_dtheta_plus = [dLk[ dims_k_c_star ] for dLk in dLk_dtheta]
 
             # residuals at candidate solution
-            resid = _slice_by_training( data.y - mu_c__k )
+            resid = slice_by_training( data.y - mu_c__k )
             # intermediate quantities
-            X_plus = _slice_by_training( X_plus )
+            X_plus = slice_by_training( X_plus )
             dLL_dk_c = dot( X_plus.T, resid )
             C_En = Lk_c_plus[:, na] * E_n_plus__k
             Lam_Cinv = Lambda_c_plus__k / Lk_c_plus[na, :]
@@ -2608,9 +2594,9 @@ class UnitSolver( Solver ):
                     for dCk in dCk_dtheta_star ]
 
             # residuals at candidate solution
-            resid = _slice_by_training( data.y - mu_c__k )
+            resid = slice_by_training( data.y - mu_c__k )
             # intermediate quantities( all in +-space )
-            X_plus = _slice_by_training( X_plus )
+            X_plus = slice_by_training( X_plus )
             dLL_dk_c = dot( X_plus.T, resid )
             C_En = dot( Ck_c_plus, E_n_plus__k )
             Lam_Cinv = dot( Lambda_c_plus__k, Ckinv_c_plus )
@@ -2952,12 +2938,12 @@ class UnitSolver( Solver ):
     """
     
     @cached
-    def y_testing( data, _slice_by_testing ):
-        return _slice_by_testing( data.y )
+    def y_testing( data, slice_by_testing ):
+        return slice_by_testing( data.y )
 
     @cached
-    def LL_testing__h( _slice_by_testing, mu__h, log_mu__h, y_testing ):
-        s = _slice_by_testing
+    def LL_testing__h( slice_by_testing, mu__h, log_mu__h, y_testing ):
+        s = slice_by_testing
         mu, log_mu = s(mu__h), s(log_mu__h)
         return -np.sum( mu ) + dot( y_testing, log_mu )
 
@@ -2976,8 +2962,8 @@ class UnitSolver( Solver ):
     """
     
     @cached
-    def LL_testing__k( _slice_by_testing, mu__k, log_mu__k, y_testing ):
-        s = _slice_by_testing
+    def LL_testing__k( slice_by_testing, mu__k, log_mu__k, y_testing ):
+        s = slice_by_testing
         mu, log_mu = s(mu__k), s(log_mu__k)
         return -np.sum( mu ) + dot( y_testing, log_mu )
 
@@ -3056,8 +3042,8 @@ class UnitSolver( Solver ):
 
     @cached
     def _interp_LL_testing__h( 
-            _slice_by_testing, _interp_mu__h, _interp_log_mu__h, y_testing ):
-        s = _slice_by_testing
+            slice_by_testing, _interp_mu__h, _interp_log_mu__h, y_testing ):
+        s = slice_by_testing
         mu, log_mu = s(_interp_mu__h), s(_interp_log_mu__h)
         return -np.sum( mu ) + dot( y_testing, log_mu )
 
@@ -3075,9 +3061,9 @@ class UnitSolver( Solver ):
         return posterior_h._interp_expected_log_g + log_FXk
 
     @cached
-    def _interp_LL_testing__k( _slice_by_testing, _interp_mu__k, 
+    def _interp_LL_testing__k( slice_by_testing, _interp_mu__k, 
             _interp_log_mu__k, y_testing ):
-        s = _slice_by_testing
+        s = slice_by_testing
         mu, log_mu = s(_interp_mu__k), s(_interp_log_mu__k)
         return -np.sum( mu ) + dot( y_testing, log_mu )
 
