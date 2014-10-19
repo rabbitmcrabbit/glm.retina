@@ -42,5 +42,5 @@ Conventions
 - `y` denotes spike counts
 - `k` denotes the linear kernel
 - `F` denotes the output nonlinearity
-- `v` denotes the set of all parameters to be learned, given the current setting of the hyperparameters (`theta`). Note that since the current hyperparameters might induce a dimensionality reduction, the cardinality of `v` may be smaller than `k`.
+- `v` denotes the set of all parameters to be learned, given the current setting of the hyperparameters (`theta`). Note that since the current hyperparameters might induce a dimensionality reduction, the cardinality of `v` may be smaller than `k`, and these may live in a different space from `k` (but we should have that `k` is a linear function of `v`).
 - `theta` denotes hyperparameters. These might be fixed in advance, or learned through cross-validation or evidence optimisation.
