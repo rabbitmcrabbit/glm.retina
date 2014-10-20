@@ -90,6 +90,173 @@ class Announcer( AutoReloader ):
         sys.stdout.write( msg )
         sys.stdout.flush()
 
+
+class GridSearcher( AutoReloader ):
+
+    def __init__( self, bounds, spacing, initial, strategy, grid_size ):
+        # parse input
+        self.strategy = strategy
+        self.grid_size = grid_size
+        # check inputs
+        self.N_dims = N_dims = len(bounds)
+        if not ( N_dims == len(grid_size) ):
+            raise ValueError('bounds and grid_size do not match')
+        if N_dims > 2:
+            pass
+            #raise NotImplementedError('only for 1/2D grids at the moment')
+        if np.min( grid_size ) <= 0:
+            raise ValueError('grid size must be at least 1 on each axis')
+        if strategy not in ['1D', '1D one pass', '1D two pass', 
+                '1D three pass', 'full']:
+            raise ValueError("strategy must be one of " + 
+                    " '1D' / '1D one pass' / '1D two pass' / " + 
+                    "'1D three pass' / 'full'" )
+        # total count
+        if strategy == '1D':
+            if not( N_dims == 1 ):
+                raise ValueError("'1D' strategy only available for 1D grids")
+            max_count = np.sum(grid_size)
+        if strategy == '1D one pass':
+            max_count = np.sum(grid_size) - len(grid_size) + 1
+        elif strategy == '1D two pass':
+            max_count = 2 * (np.sum(grid_size) - len(grid_size)) + 1
+        elif strategy == '1D three pass':
+            max_count = 3 * (np.sum(grid_size) - len(grid_size)) + 1
+        elif strategy == 'full':
+            max_count = np.prod(grid_size)
+        self.max_count = max_count
+        # calculate ordinate values
+        self.ordinates = ordinates = []
+        for i in range(N_dims):
+            s = grid_size[i]
+            b = bounds[i]
+            if spacing[i] == 'linear':
+                pts = np.linspace( b[0], b[1], s )
+            elif spacing[i] == 'log':
+                pts = np.logspace( np.log10(b[0]), np.log10(b[1]), s )
+            else:
+                raise ValueError('spacing must be log or linear')
+            ordinates.append( pts )
+        # initial start point
+        self.start_idx = start_idx = zeros( N_dims, dtype=int )
+        for i in range(N_dims):
+            if spacing[i] == 'linear':
+                d = np.abs( ordinates[i] - initial[i] )
+            elif spacing[i] == 'log':
+                d = np.abs( np.log10(ordinates[i]) - np.log10(initial[i]) )
+            start_idx[i] = np.argmin(d)
+        # construct executed dictionary
+        self.evidence_values = {}
+        self.is_finished = False
+        self.start()
+
+    @property
+    def current_count( self ):
+        return len( self.evidence_values )
+
+    def start( self ):
+        # grid size is only 1D
+        if self.N_dims == 1:
+            self.stack = [(i,) for i in np.arange( self.grid_size[0] )]
+        # 1D: create stack
+        elif self.strategy in ['1D one pass', '1D two pass', '1D three pass', 
+                '1D'] and self.N_dims == 2:
+            self.axis_passes = [(self.start_idx[0], None)]
+            self.stack = [(self.start_idx[0], i) 
+                    for i in np.arange( self.grid_size[1] )]
+        # full: create stack
+        elif self.strategy == 'full':
+            self.stack = zip(*[i.flatten() for i in np.meshgrid( *[
+                np.arange(s) for s in self.grid_size], indexing='ij' )])
+        # 1D in high dimensions
+        elif self.N_dims > 2 and self.strategy.startswith('1D'):
+            axis_pass = list(self.start_idx)
+            axis_pass[-1] = None
+            self.axis_passes = [ tuple(axis_pass) ]
+            self.stack = [ tuple( axis_pass[:-1] + [i]) 
+                    for i in np.arange(self.grid_size[-1]) ]
+        else:
+            raise ValueError('unknown strategy')
+
+    @property
+    def current_idx( self ):
+        return self.stack[0]
+
+    @property
+    def current_theta( self ):
+        idx = self.current_idx
+        return [ self.ordinates[i][idx[i]] for i in range(len(idx)) ]
+
+    def next( self, evidence ):
+        # save evidence
+        if evidence is not None:
+            self.evidence_values[ self.current_idx ] = evidence
+        # pop off the stack
+        self.stack = self.stack[1:]
+        # if the stack is empty
+        if len( self.stack ) == 0:
+            if self.N_dims == 1:
+                self.is_finished = True
+            elif self.strategy == 'full':
+                self.is_finished = True
+            elif ( self.strategy == '1D one pass' 
+                    and len(self.axis_passes) == self.N_dims ):
+                self.is_finished = True
+            elif ( self.strategy == '1D two pass' 
+                    and len(self.axis_passes) == (self.N_dims * 2) ):
+                self.is_finished = True
+            elif ( self.strategy == '1D three pass' 
+                    and len(self.axis_passes) == (self.N_dims * 3) ):
+                self.is_finished = True
+            elif self.N_dims <= 2:
+                last_axis_pass = self.axis_passes[-1]
+                if last_axis_pass[0] is None:
+                    # find best row
+                    evs = A([ 
+                        self.evidence_values[ (i, last_axis_pass[1])] 
+                        for i in range(self.grid_size[0]) ])
+                    row_idx = np.argmax( evs )
+                    self.axis_passes += [(row_idx, None)]
+                    # construct next column
+                    self.stack = [(row_idx, i) 
+                            for i in np.arange( self.grid_size[1] )]
+                else:
+                    # find best column
+                    evs = A([ 
+                        self.evidence_values[ (last_axis_pass[0], j )] 
+                        for j in range(self.grid_size[1]) ])
+                    col_idx = np.argmax( evs )
+                    self.axis_passes += [(None, col_idx)]
+                    # construct next row
+                    self.stack = [(i, col_idx) 
+                            for i in np.arange( self.grid_size[0] )]
+            else:
+                last_axis_pass = self.axis_passes[-1]
+                axis_idx = [ i for i, a in enumerate(last_axis_pass) 
+                        if a == None ][0]
+                last_axis_list = []
+                for i in range( self.grid_size[axis_idx] ):
+                    a = A( last_axis_pass )
+                    a[ axis_idx ] = i
+                    last_axis_list.append( tuple(a) )
+                evs = A([ self.evidence_values[a] for a in last_axis_list ])
+                new_pos = np.argmax(evs)
+                next_axis_pass = [a for a in last_axis_pass]
+                next_axis_pass[ axis_idx ] = new_pos
+                axis_idx -= 1
+                if axis_idx < 0:
+                    axis_idx = self.N_dims - 1
+                next_axis_pass[ axis_idx ] = None
+                self.axis_passes += [ tuple(next_axis_pass) ]
+                for i in np.arange( self.grid_size[ axis_idx ] ):
+                    next_axis_pass[ axis_idx ] = i
+                    self.stack.append( tuple(next_axis_pass) )
+        # check if the top one has been done
+        if len( self.stack ) > 0:
+            if self.evidence_values.has_key( self.current_idx ):
+                self.next( None )
+
+
 """
 =============
 Data class
@@ -376,9 +543,9 @@ class Solver( AutoCR ):
     """
     
     def _Prior_class( self ):
-        """ Returns the superclass that defines the `L` or `C` method. """
+        """ Returns the superclass that defines the `l` or `C` method. """
         return [ c for c in self.__class__.mro() 
-                if c.__dict__.has_key('L') or c.__dict__.has_key('C') ][0]
+                if c.__dict__.has_key('l') or c.__dict__.has_key('C') ][0]
 
     def _recast_theta( self, ic ):
         """ Process results of previous solver to determine initial theta.
@@ -488,9 +655,9 @@ class Solver( AutoCR ):
         # functions to minimise
         # (these are interface functions to the cacher)
         eq = np.array_equal
-        f = self.cfunction( eq, '_negLP_objective', 'v' )
-        df = self.cfunction( eq, '_negLP_jacobian', 'v' )
-        d2f = self.cfunction( eq, '_negLP_hessian', 'v' )
+        f = self.cfunction( eq, 'negLP_objective', 'v' )
+        df = self.cfunction( eq, 'negLP_jacobian', 'v' )
+        d2f = self.cfunction( eq, 'negLP_hessian', 'v' )
         # initialise starting value of v
         self.initialise_v()
         # reporting during each step
@@ -498,10 +665,10 @@ class Solver( AutoCR ):
             # set the current value of `v` (if required)
             self.csetattr( 'v', v )
             # run the callback function
-            self._negLP_callback( prefix='calc_posterior' )
+            self.negLP_callback( prefix='calc_posterior' )
             # have we converged
             last_negLP = self._last_negLP
-            this_negLP = self._negLP_objective
+            this_negLP = self.negLP_objective
             improvement = -(this_negLP - last_negLP)
             # if we have converged, break out of the loop
             if assess_convergence and (improvement < ftol):
@@ -912,10 +1079,10 @@ class Solver( AutoCR ):
         """ Check derivatives of the log posterior.
 
         For both the Jacobian and Hessian, evaluates the analytic derivatives
-        provided by the respective attributes `_negLP_jacobian` and 
-        `_negLP_hessian`, and compares with empirical values, obtained 
-        from finite differences method on `_negLP_objective` and 
-        `_negLP_jacobian` respectively.
+        provided by the respective attributes `negLP_jacobian` and 
+        `negLP_hessian`, and compares with empirical values, obtained 
+        from finite differences method on `negLP_objective` and 
+        `negLP_jacobian` respectively.
 
         Typically, this prints out the size of the error between analytic
         and empirical estimates, as a norm. For example, for the Jacobian 
@@ -960,13 +1127,13 @@ class Solver( AutoCR ):
         # *** JACOBIAN ***
         # evaluate analytic jacobian
         self.v = v0
-        LP = self._negLP_objective
-        dLP = self._negLP_jacobian
+        LP = self.negLP_objective
+        dLP = self.negLP_jacobian
         # evaluate empirical jacobian
         edLP = np.zeros( N_v )
         for i in progress.dots( range(N_v), 'empirical jacobian' ):
             self.v = v0 + dv(i)
-            edLP[i] = ( self._negLP_objective - LP ) / eps
+            edLP[i] = ( self.negLP_objective - LP ) / eps
         # restore `v`
         self.v = v0
         # print
@@ -979,11 +1146,11 @@ class Solver( AutoCR ):
             raise ValueError('Jacobian of LP failed at %.6f' % err1 )
         # HESSIAN
         # evaluate analytic
-        d2LP = self._negLP_hessian
+        d2LP = self.negLP_hessian
         # evaluate empirical
         def empirical_d2LP(i):
             self.v = v0 + dv(i)
-            return ( self._negLP_jacobian - dLP ) / eps
+            return ( self.negLP_jacobian - dLP ) / eps
         ed2LP = A([ empirical_d2LP(i) 
             for i in progress.dots( range(N_v), 'empirical hessian' ) ])
         # restore
@@ -1165,7 +1332,7 @@ class Solver( AutoCR ):
     """
 
     @cached
-    def k_star( v ):
+    def k_star_d( v ):
         """ Extract the dim-reduced `k` from `v`. Can change in subclasses. """
         return v
 
@@ -1180,11 +1347,12 @@ class Solver( AutoCR ):
     general form, `C` will be an arbitrary covariance matrix; however, in
     some models it might have specific structure. For notational simplicity,
     we distinguish here between two forms: where it is a diagonal matrix,
-    in which case it is referred to as `L`; and where it is a non-diagonal
-    matrix, in which case it is referred to as `C`. In this latter case,
-    `L` is still used as the diagonal in the eigendecomposition of `C`.
+    in which case the diagonal vector is referred to as `l`; and where it is 
+    a non-diagonal matrix, in which case it is referred to as `C`. 
+    In this latter case, `l` is still used as the diagonal in the 
+    eigendecomposition of `C`.
     
-    The definition of `C` or `L` must be given in a subclass. If `L` is
+    The definition of `C` or `l` must be given in a subclass. If `l` is
     given, then the attribute `C_is_diagonal` must be set to False.
     
     """
@@ -1212,29 +1380,29 @@ class Solver( AutoCR ):
         if C_is_diagonal:
             return None
         try:
-            L, Qk = eigh( C )
+            l, Q = eigh( C )
         except np.linalg.LinAlgError:
-            L, Qk = eigh( C * 1e4 )
-            L /= 1e4
-        return {'L':L, 'Qk':Qk}
+            l, Q = eigh( C * 1e4 )
+            l /= 1e4
+        return {'l':l, 'Q':Q}
 
     @cached( cskip = ('C_is_diagonal', True, 'C_eig') )
-    def L( C_is_diagonal, C_eig ):
+    def l( C_is_diagonal, C_eig ):
         """ Return the diagonal covariance (in the rotated space if req'd) """
         if C_is_diagonal:
-            self._raise_must_subclass('L')
+            self._raise_must_subclass('l')
         else:
-            return C_eig['L']
+            return C_eig['l']
        
     @cached
-    def dL_dtheta():
+    def dl_dtheta():
         """ Jacobian of the diagonal prior covariance wrt `theta` """
-        self._raise_must_subclass('dL_dtheta')
+        self._raise_must_subclass('dl_dtheta')
 
     @cached
-    def dims( L, cutoff_lambda ):
+    def dims( l, cutoff_lambda ):
         """ Dimensions to keep, based on the spectrum """
-        return ( L/maxabs(L) > cutoff_lambda )
+        return ( l/maxabs(l) > cutoff_lambda )
 
     @cached
     def D_star( dims ):
@@ -1243,7 +1411,7 @@ class Solver( AutoCR ):
 
     @cached
     def required_v_length( D_star ):
-        """ Number of parameters in `v`, based on `len(k_star)` """
+        """ Number of parameters in `v`, based on `len(k_star_d)` """
         return D_star
 
     @cached
@@ -1262,7 +1430,7 @@ class Solver( AutoCR ):
     @cached( cskip=[ 
         ('R_is_identity', True, ['dims', 'R']),
         ('C_is_diagonal', True, 'R') ] )
-    def X_star( R_is_identity, C_is_diagonal, data, dims, R ):
+    def X_star_td( R_is_identity, C_is_diagonal, data, dims, R ):
         """ Dimensionality-reduced matrix of regressors """ 
         if R_is_identity:
             return data.X
@@ -1272,53 +1440,53 @@ class Solver( AutoCR ):
             return dot( data.X, R.T )
 
     @cached
-    def L_star( L, dims ):
+    def l_star( l, dims ):
         """ Diagonalised prior covariance in reduced space. """
-        return L[ dims ]
+        return l[ dims ]
 
     @cached
-    def Linv_star( L_star ):
+    def l_star_inv( l_star ):
         """ Inverse of diagonal of prior covariance in reduced space. """
-        return 1. / L_star
+        return 1. / l_star
 
     @cached
-    def logdet_C_star( L_star ):
-        return np.sum(log(L_star))
+    def logdet_C_star( l_star ):
+        return np.sum(log(l_star))
 
     @cached( cskip=[
         ('R_is_identity', True, ['dims', 'R', 'D']),
         ('C_is_diagonal', True, ['R']) ])
-    def k( k_star, R_is_identity, C_is_diagonal, dims, R, D ):
+    def k_d( k_star_d, R_is_identity, C_is_diagonal, dims, R, D ):
         """ Expand the reduced-space kernel to the full kernel. """
         if R_is_identity:
-            return k_star
+            return k_star_d
         elif C_is_diagonal:
-            k = zeros( D )
-            k[ dims ] = k_star
-            return k
+            k_d = zeros( D )
+            k_d[ dims ] = k_star_d
+            return k_d
         else:
-            return dot( R.T, k_star )
+            return dot( R.T, k_star_d )
 
-    def reproject_to_v( self, k=None, posterior=None ):
-        """ Calculates `v` from `k`. Does not change object's state. 
+    def reproject_to_v( self, k_d=None, posterior=None ):
+        """ Calculates `v` from `k_d`. Does not change object's state. 
         
-        Can either provide `k` *or* a posterior which contains this attribute.
+        Can either provide `k_d` *or* a posterior which contains this attribute.
         
         """
         # check inputs
-        if [k, posterior].count(None) != 1:
-            raise ValueError('either provide `k` or posterior')
+        if [k_d, posterior].count(None) != 1:
+            raise ValueError('either provide `k_d` or posterior')
         # provide a posterior
         elif posterior is not None:
-            return self.reproject_to_v( k=posterior.k )
-        # provide a `k` value
-        elif k is not None:
+            return self.reproject_to_v( k_d=posterior.k_d )
+        # provide a `k_d` value
+        elif k_d is not None:
             if self.R_is_identity:
-                return k
+                return k_d
             elif self.C_is_diagonal:
-                return k[ self.dims ]
+                return k_d[ self.dims ]
             else:
-                return dot( self.R, k )
+                return dot( self.R, k_d )
 
     """
     ====================
@@ -1326,73 +1494,96 @@ class Solver( AutoCR ):
     ====================
     """
 
-    @cached
-    def log_FXk( X_star, k_star ):
-        return dot( X_star, k_star )
+    def _raise_bad_nonlinearity( self ):
+        raise ValueError('unknown nonlinearity: %s' % self.nonlinearity )
 
     @cached
-    def FXk( log_FXk ):
-        return exp( log_FXk )
+    def y_t_training( data, slice_by_training ):
+        """ The training data. """
+        return slice_by_training( data.y_t )
 
     @cached
-    def mu__k( posterior_h, FXk ):
-        return posterior_h.expected_g * FXk
+    def z_t( X_star_td, k_star_d ):
+        """ Argument to the nonlinearity """
+        return dot( X_star_td, k_star_d )
 
     @cached
-    def log_mu__k( posterior_h, log_FXk ):
-        return posterior_h.expected_log_g + log_FXk
+    def ez_t( z_t ):
+        return exp( z_t )
 
     @cached
-    def LL_training__k( y_training, slice_by_training, mu__k, log_mu__k ):
-        s = slice_by_training
-        mu, log_mu = s(mu__k), s(log_mu__k)
-        return -np.sum( mu ) + dot( y_training, log_mu )
+    def mu_t( ez_t, nonlinearity ):
+        """ Expected firing rate """
+        if nonlinearity == 'exp':
+            return ez_t
+        elif nonlinearity == 'soft':
+            return log( 1 + ez_t ) / log(2)
+        else:
+            self._raise_bad_nonlinearity()
+
+    @cached( cskip = ('nonlinearity', 'exp', 'mu_t') )
+    def log_mu_t( z_t, nonlinearity, mu_t ):
+        """ Log of expected firing rate """
+        if nonlinearity == 'exp':
+            return z_t
+        else:
+            return log( mu_t )
 
     @cached
-    def LPrior__k( logdet_C_star, k_star, Linv_star ):
+    def LL_training( y_t_training, slice_by_training, mu_t, log_mu_t ):
+        """ Log likelihood on `k` given training data. """
+        # select the training data only
+        mu_t = slice_by_training( mu_t )
+        log_mu_t = slice_by_training( log_mu_t )
+        # compute
+        return -np.sum( mu_t ) + dot( y_t_training, log_mu_t )
+
+    @cached
+    def LPrior( logdet_C_star, k_star_d, l_star_inv ):
+        """ Log prior on `k`. """
         return sum([
             -0.5 * logdet_C_star, 
-            -0.5 * dot( k_star.T, Linv_star * k_star ) ])
+            -0.5 * dot( k_star_d.T, l_star_inv * k_star_d ) ])
 
     @cached
-    def LP_training__k( LL_training__k, LPrior__k ):
-        return LL_training__k + LPrior__k
+    def LP_training( LL_training, LPrior ):
+        """ Log posterior on `k` given training data. """
+        return LL_training + LPrior
 
     """ Jacobian """
 
     @cached
-    def resid__k( mu__k, data, zero_during_testing ):
-        return zero_during_testing( data.y - mu__k )
+    def resid_t( mu_t, data, zero_during_testing ):
+        """ Residual spike counts. Zeroed outside of training data. """
+        return zero_during_testing( data.y_t - mu_t )
 
     @cached
-    def dLL_training__k( resid__k, X_star ):
-        """ Jacobian of training log likelihood wrt `v`. """
-        return dot( X_star.T, resid__k )
+    def dLL_training( resid_t, X_star_td ):
+        """ Jacobian of training log likelihood wrt `k_star_d`. """
+        return dot( X_star_td.T, resid_t )
 
     @cached
-    def dLPrior__k( Linv_star, k_star ):
-        return -Linv_star * k_star
+    def dLPrior( l_star_inv, k_star_d ):
+        """ Jacobian of log prior wrt `k_star_d`. """
+        return -l_star_inv * k_star_d
 
     @cached
-    def dLP_training__k( dLL_training__k, dLPrior__k ):
-        """ Jacobian of training log prob wrt `v`. """
-        return dLL_training__k + dLPrior__k
+    def dLP_training( dLL_training, dLPrior ):
+        """ Jacobian of training log posterior wrt `k_star_d`. """
+        return dLL_training + dLPrior
 
     """ Hessian """
 
     @cached
-    def d2LP_training__k( mu__k, D_star, slice_by_training,
-            y_training, X_star, Linv_star ):
-        """ Hessian of training log prob wrt `v`. """
+    def d2LP_training( mu_t, D_star, slice_by_training, X_star_td, l_star_inv ):
+        """ Hessian of training log prob wrt `k_star_d`. """
         # training data only
-        s = slice_by_training
-        y = y_training
-        mu, X_star = s(mu__k), s(X_star)
+        mu_t = slice_by_training( mu_t )
+        X_star_td = slice_by_training( X_star_td )
         # evaluate d2LL
-        mu_X_star = mu[:, na] * X_star
-        d2LP = -dot( X_star.T, mu[:, na] * X_star )
+        d2LP = -dot( X_star_td.T, mu_t[:, na] * X_star_td )
         # add d2LPrior to the diagonal
-        d2LP[ range(D_star), range(D_star) ] -= Linv_star
+        d2LP[ range(D_star), range(D_star) ] -= l_star_inv
         return d2LP
     
     """
@@ -1402,39 +1593,34 @@ class Solver( AutoCR ):
     """
 
     @cached
-    def _negLP_objective__k( LP_training__k ):
-        return -LP_training__k
+    def negLP_objective( LP_training ):
+        return -LP_training
 
     @cached
-    def _negLP_jacobian__k( dLP_training__k ):
-        return -dLP_training__k
+    def negLP_jacobian( dLP_training ):
+        return -dLP_training
 
     @cached
-    def _negLP_hessian__k( d2LP_training__k ):
-        return -d2LP_training__k
+    def negLP_hessian( d2LP_training ):
+        return -d2LP_training
 
-    def _negLP_callback__k( self, **kw ):
-        try:
-            offset = self.posterior_h.LPrior__h
-        except AttributeError:
-            offset = 0
-        LP_total = self.LP_training__k + offset
-        self.announce( 'LP step:  %.3f' % LP_total, n_steps=4, **kw )
+    def negLP_callback( self, **kw ):
+        self.announce( 'LP step:  %.3f' % self.LP_training, n_steps=4, **kw )
 
     """
-    ===============================
-    Posterior_k specific attributes
-    ===============================
+    =============================
+    Posterior specific attributes
+    =============================
 
-    These have dependencies on `k_star` and `Lambdainv_k_star`
+    These have dependencies on `k_star_d` and `Lambdainv_k_star`
 
     """
     
     @cached
-    def Lambdainv_v( _negLP_hessian__k, is_posterior ):
+    def Lambdainv_v( negLP_hessian__k, is_posterior ):
         if not is_posterior:
             raise TypeError('attribute only available for `k` posterior.')
-        return _negLP_hessian__k
+        return negLP_hessian__k
 
     @cached
     def Lambdainv_k_star( Lambdainv_v ):
@@ -1460,8 +1646,8 @@ class Solver( AutoCR ):
             return mdot( R.T, Lambda_k_star, R )
 
     @cached
-    def MAP_log_FXk( X_star, k_star ):
-        return dot( X_star, k_star )
+    def MAP_log_FXk( X_star_td, k_star_d ):
+        return dot( X_star_td, k_star_d )
 
     @cached
     def expected_log_FXk( MAP_log_FXk ):
@@ -1472,15 +1658,15 @@ class Solver( AutoCR ):
         return exp( expected_log_FXk )
 
     @cached( cskip = [
-        ('is_point_estimate', True, ['X_star', 'Lambda_k_star', 'MAP_log_FXk']),
+        ('is_point_estimate', True, ['X_star_td', 'Lambda_k_star', 'MAP_log_FXk']),
         ('is_point_estimate', False, 'MAP_FXk') ])
-    def expected_FXk( is_point_estimate, MAP_log_FXk, MAP_FXk, X_star, 
+    def expected_FXk( is_point_estimate, MAP_log_FXk, MAP_FXk, X_star_td, 
             Lambda_k_star ):
         if is_point_estimate:
             return MAP_FXk
         else:
             return exp( MAP_log_FXk 
-                    + 0.5 * np.sum(X_star.dot(Lambda_k_star) * X_star, axis=1))
+                    + 0.5 * np.sum(X_star_td.dot(Lambda_k_star) * X_star_td, axis=1))
 
     @cached
     def logdet_Lambdainv_k_star( Lambdainv_k_star ):
@@ -1488,22 +1674,22 @@ class Solver( AutoCR ):
 
     @cached
     def evidence_components__k( LL_training__k, logdet_C_star, 
-            logdet_Lambdainv_k_star, k_star, Linv_star ):
+            logdet_Lambdainv_k_star, k_star_d, l_star_inv ):
         return A([ 
             LL_training__k, 
             -0.5 * ( logdet_C_star + logdet_Lambdainv_k_star ),
-            -0.5 * dot( k_star, Linv_star * k_star ) ])
+            -0.5 * dot( k_star_d, l_star_inv * k_star_d ) ])
     
     @cached
     def evidence__k( evidence_components__k ):
         return np.sum( evidence_components__k )
 
     @cached
-    def E_star__k( X_star, mu__k, is_posterior ):
+    def E_star__k( X_star_td, mu__k, is_posterior ):
         """ Hessian of neg log likelihood, for local evidence approx """
         if not is_posterior:
             raise TypeError('attribute only available for `k` posterior.')
-        return dot( X_star.T, mu__k[:, na] * X_star )
+        return dot( X_star_td.T, mu__k[:, na] * X_star_td )
 
     """
     ===========================
@@ -1631,25 +1817,25 @@ class Solver( AutoCR ):
         ('second_dr_k', 'none', 'R_c_star'),
         ('second_dr_k', 'project', 'R_c_star') ])
     def k_n_plus( second_dr_k, posterior_k, dims_c_star, R_c_star ):
-        k_star = posterior_k.k_star
+        k_star_d = posterior_k.k_star_d
         if second_dr_k == 'none':
-            return k_star
+            return k_star_d
         elif second_dr_k == 'project':
-            return k_star[ dims_c_star ]
+            return k_star_d[ dims_c_star ]
         else: 
-            return dot( R_c_star, k_star )
+            return dot( R_c_star, k_star_d )
 
     @cached( cskip = [
         ('second_dr_k', 'none', 'R_c_star'),
         ('second_dr_k', 'project', 'R_c_star') ])
     def X_plus( second_dr_k, posterior_k, dims_c_star, R_c_star ):
-        X_star = posterior_k.X_star
+        X_star_td = posterior_k.X_star_td
         if second_dr_k == 'none':
-            return X_star
+            return X_star_td
         elif second_dr_k == 'project':
-            return X_star[ :, dims_c_star ]
+            return X_star_td[ :, dims_c_star ]
         else: 
-            return dot( X_star, R_c_star.T )
+            return dot( X_star_td, R_c_star.T )
 
     """ Approximate posterior at candidate theta """
 
@@ -1707,11 +1893,11 @@ class Solver( AutoCR ):
 
     @cached
     def local_evidence_components__k( mu_c__k, slice_by_training, log_FXk_c,
-            y_training, L_c_plus, E_n_plus__k, D_plus, k_c_plus, posterior_h ):
+            y_t_training, L_c_plus, E_n_plus__k, D_plus, k_c_plus, posterior_h ):
         # log likelihood
         mu = slice_by_training( mu_c__k )
         log_mu = slice_by_training( log_FXk_c + posterior_h.expected_log_g )
-        LL = -np.sum( mu ) + dot( y_training, log_mu )
+        LL = -np.sum( mu ) + dot( y_t_training, log_mu )
         if ~np.isfinite( LL ):
             return -np.inf
         if len( k_c_plus ) == 0:
@@ -2107,20 +2293,6 @@ class Solver( AutoCR ):
     def y_testing( data, slice_by_testing ):
         return slice_by_testing( data.y )
 
-    @cached
-    def LL_testing__h( slice_by_testing, mu__h, log_mu__h, y_testing ):
-        s = slice_by_testing
-        mu, log_mu = s(mu__h), s(log_mu__h)
-        return -np.sum( mu ) + dot( y_testing, log_mu )
-
-    @cached
-    def LL_training_per_observation__h( LL_training__h, T_training ):
-        return LL_training__h / T_training
-
-    @cached
-    def LL_testing_per_observation__h( LL_testing__h, T_testing ):
-        return LL_testing__h / T_testing
-
     """
     =======
     For `k`
@@ -2148,77 +2320,6 @@ class Solver( AutoCR ):
     """
 
     @cached
-    def _interp_h( h, testing_slices, T ):
-        h = h.copy()
-        for s in testing_slices:
-            if s.start == 0:
-                h[s] = h[s.stop]
-            elif s.stop == T:
-                h[s] = h[s.start]
-            else:
-                h[s] = np.linspace(h[s.start], h[s.stop - 1], s.stop - s.start)
-        return h
-
-    @cached
-    def _interp_g( nonlinearity_h, _interp_h ):
-        if nonlinearity_h == 'exp':
-            return exp( _interp_h )
-        elif nonlinearity_h == 'soft':
-            return log( 1 + exp(_interp_h) )
-        else:
-            self._raise_bad_nonlinearity()
-
-    @cached( cskip = [ ('nonlinearity_h', 'exp', ['_interp_g']) ] )
-    def _interp_log_g( nonlinearity_h, _interp_h, _interp_g ):
-        if nonlinearity_h == 'exp':
-            return _interp_h
-        else:
-            return log( _interp_g )
-
-    @cached
-    def _interp_expected_log_g( _interp_log_g ):
-        return _interp_log_g
-
-    @cached
-    def _interp_MAP_log_g( _interp_log_g ):
-        return _interp_log_g
-
-    @cached( cskip = [
-        ('nonlinearity_h', 'soft', ['diag_Lambda_h', '_interp_h']),
-        ('is_point_estimate', True, ['diag_Lambda_h', '_interp_h']),
-        ('is_point_estimate', False, ['_interp_g']) ] )
-    def _interp_expected_g( 
-            nonlinearity_h, is_point_estimate, _interp_g, _interp_h, diag_Lambda_h ):
-        if is_point_estimate or (nonlinearity_h == 'soft'):
-            return _interp_g
-        else:
-            return exp( _interp_h + 0.5 * diag_Lambda_h )
-
-    @cached
-    def _interp_MAP_g( _interp_g ):
-        return _interp_g
-
-    @cached
-    def _interp_mu__h( _interp_g, posterior_k ):
-        return _interp_g * posterior_k.expected_FXk
-
-    @cached
-    def _interp_log_mu__h( _interp_log_g, posterior_k ):
-        return _interp_log_g + posterior_k.expected_log_FXk
-
-    @cached
-    def _interp_LL_testing__h( 
-            slice_by_testing, _interp_mu__h, _interp_log_mu__h, y_testing ):
-        s = slice_by_testing
-        mu, log_mu = s(_interp_mu__h), s(_interp_log_mu__h)
-        return -np.sum( mu ) + dot( y_testing, log_mu )
-
-    @cached
-    def _interp_LL_testing_per_observation__h( 
-            _interp_LL_testing__h, T_testing ):
-        return _interp_LL_testing__h / T_testing
-
-    @cached
     def _interp_mu__k( posterior_h, FXk ):
         return posterior_h._interp_expected_g * FXk
 
@@ -2241,177 +2342,6 @@ class Solver( AutoCR ):
 
 
 
-
-"""
-===============
-Grid searching
-===============
-"""
-
-class GridSearcher( AutoReloader ):
-
-    def __init__( self, bounds, spacing, initial, strategy, grid_size ):
-        # parse input
-        self.strategy = strategy
-        self.grid_size = grid_size
-        # check inputs
-        self.N_dims = N_dims = len(bounds)
-        if not ( N_dims == len(grid_size) ):
-            raise ValueError('bounds and grid_size do not match')
-        if N_dims > 2:
-            pass
-            #raise NotImplementedError('only for 1/2D grids at the moment')
-        if np.min( grid_size ) <= 0:
-            raise ValueError('grid size must be at least 1 on each axis')
-        if strategy not in ['1D', '1D one pass', '1D two pass', 
-                '1D three pass', 'full']:
-            raise ValueError("strategy must be one of " + 
-                    " '1D' / '1D one pass' / '1D two pass' / " + 
-                    "'1D three pass' / 'full'" )
-        # total count
-        if strategy == '1D':
-            if not( N_dims == 1 ):
-                raise ValueError("'1D' strategy only available for 1D grids")
-            max_count = np.sum(grid_size)
-        if strategy == '1D one pass':
-            max_count = np.sum(grid_size) - len(grid_size) + 1
-        elif strategy == '1D two pass':
-            max_count = 2 * (np.sum(grid_size) - len(grid_size)) + 1
-        elif strategy == '1D three pass':
-            max_count = 3 * (np.sum(grid_size) - len(grid_size)) + 1
-        elif strategy == 'full':
-            max_count = np.prod(grid_size)
-        self.max_count = max_count
-        # calculate ordinate values
-        self.ordinates = ordinates = []
-        for i in range(N_dims):
-            s = grid_size[i]
-            b = bounds[i]
-            if spacing[i] == 'linear':
-                pts = np.linspace( b[0], b[1], s )
-            elif spacing[i] == 'log':
-                pts = np.logspace( np.log10(b[0]), np.log10(b[1]), s )
-            else:
-                raise ValueError('spacing must be log or linear')
-            ordinates.append( pts )
-        # initial start point
-        self.start_idx = start_idx = zeros( N_dims, dtype=int )
-        for i in range(N_dims):
-            if spacing[i] == 'linear':
-                d = np.abs( ordinates[i] - initial[i] )
-            elif spacing[i] == 'log':
-                d = np.abs( np.log10(ordinates[i]) - np.log10(initial[i]) )
-            start_idx[i] = np.argmin(d)
-        # construct executed dictionary
-        self.evidence_values = {}
-        self.is_finished = False
-        self.start()
-
-    @property
-    def current_count( self ):
-        return len( self.evidence_values )
-
-    def start( self ):
-        # grid size is only 1D
-        if self.N_dims == 1:
-            self.stack = [(i,) for i in np.arange( self.grid_size[0] )]
-        # 1D: create stack
-        elif self.strategy in ['1D one pass', '1D two pass', '1D three pass', 
-                '1D'] and self.N_dims == 2:
-            self.axis_passes = [(self.start_idx[0], None)]
-            self.stack = [(self.start_idx[0], i) 
-                    for i in np.arange( self.grid_size[1] )]
-        # full: create stack
-        elif self.strategy == 'full':
-            self.stack = zip(*[i.flatten() for i in np.meshgrid( *[
-                np.arange(s) for s in self.grid_size], indexing='ij' )])
-        # 1D in high dimensions
-        elif self.N_dims > 2 and self.strategy.startswith('1D'):
-            axis_pass = list(self.start_idx)
-            axis_pass[-1] = None
-            self.axis_passes = [ tuple(axis_pass) ]
-            self.stack = [ tuple( axis_pass[:-1] + [i]) 
-                    for i in np.arange(self.grid_size[-1]) ]
-        else:
-            raise ValueError('unknown strategy')
-
-    @property
-    def current_idx( self ):
-        return self.stack[0]
-
-    @property
-    def current_theta( self ):
-        idx = self.current_idx
-        return [ self.ordinates[i][idx[i]] for i in range(len(idx)) ]
-
-    def next( self, evidence ):
-        # save evidence
-        if evidence is not None:
-            self.evidence_values[ self.current_idx ] = evidence
-        # pop off the stack
-        self.stack = self.stack[1:]
-        # if the stack is empty
-        if len( self.stack ) == 0:
-            if self.N_dims == 1:
-                self.is_finished = True
-            elif self.strategy == 'full':
-                self.is_finished = True
-            elif ( self.strategy == '1D one pass' 
-                    and len(self.axis_passes) == self.N_dims ):
-                self.is_finished = True
-            elif ( self.strategy == '1D two pass' 
-                    and len(self.axis_passes) == (self.N_dims * 2) ):
-                self.is_finished = True
-            elif ( self.strategy == '1D three pass' 
-                    and len(self.axis_passes) == (self.N_dims * 3) ):
-                self.is_finished = True
-            elif self.N_dims <= 2:
-                last_axis_pass = self.axis_passes[-1]
-                if last_axis_pass[0] is None:
-                    # find best row
-                    evs = A([ 
-                        self.evidence_values[ (i, last_axis_pass[1])] 
-                        for i in range(self.grid_size[0]) ])
-                    row_idx = np.argmax( evs )
-                    self.axis_passes += [(row_idx, None)]
-                    # construct next column
-                    self.stack = [(row_idx, i) 
-                            for i in np.arange( self.grid_size[1] )]
-                else:
-                    # find best column
-                    evs = A([ 
-                        self.evidence_values[ (last_axis_pass[0], j )] 
-                        for j in range(self.grid_size[1]) ])
-                    col_idx = np.argmax( evs )
-                    self.axis_passes += [(None, col_idx)]
-                    # construct next row
-                    self.stack = [(i, col_idx) 
-                            for i in np.arange( self.grid_size[0] )]
-            else:
-                last_axis_pass = self.axis_passes[-1]
-                axis_idx = [ i for i, a in enumerate(last_axis_pass) 
-                        if a == None ][0]
-                last_axis_list = []
-                for i in range( self.grid_size[axis_idx] ):
-                    a = A( last_axis_pass )
-                    a[ axis_idx ] = i
-                    last_axis_list.append( tuple(a) )
-                evs = A([ self.evidence_values[a] for a in last_axis_list ])
-                new_pos = np.argmax(evs)
-                next_axis_pass = [a for a in last_axis_pass]
-                next_axis_pass[ axis_idx ] = new_pos
-                axis_idx -= 1
-                if axis_idx < 0:
-                    axis_idx = self.N_dims - 1
-                next_axis_pass[ axis_idx ] = None
-                self.axis_passes += [ tuple(next_axis_pass) ]
-                for i in np.arange( self.grid_size[ axis_idx ] ):
-                    next_axis_pass[ axis_idx ] = i
-                    self.stack.append( tuple(next_axis_pass) )
-        # check if the top one has been done
-        if len( self.stack ) > 0:
-            if self.evidence_values.has_key( self.current_idx ):
-                self.next( None )
 
 
 """
