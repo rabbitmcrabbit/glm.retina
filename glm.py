@@ -267,23 +267,23 @@ class Data( AutoReloader ):
 
     """ Data structure, for a conditionally-Poisson response model. """
 
-    def __init__( self, X_td, y_t, 
+    def __init__( self, X__td, y__t, 
             normalise=False, whiten=False, add_constant=True, 
             announcer=None, verbose=False ):
         """ Construct a Data object. 
         
-        Provide the stimulus `X_td`, which is size ( T x D ).
-        Provide the spike count response `y_t`, which is size ( T ).
+        Provide the stimulus `X__td`, which is size ( T x D ).
+        Provide the spike count response `y__t`, which is size ( T ).
 
         Optional keywords:
 
-        - `normalise` : transform each of the D dimensions of `X_td` to have
+        - `normalise` : transform each of the D dimensions of `X__td` to have
             zero mean and unitary standard deviation
 
-        - `whiten` : transform so that each of the D dimensions of `X_td` has
+        - `whiten` : transform so that each of the D dimensions of `X__td` has
             zero mean, and X^T . X = I
 
-        - `add_constant` : append an extra dimension to `X_td` which is 
+        - `add_constant` : append an extra dimension to `X__td` which is 
             constant. 
 
         Verbose output:
@@ -301,11 +301,11 @@ class Data( AutoReloader ):
         # normalise, if required
         if normalise or whiten:
             self.announce('normalising', prefix='Data')
-            Xm = np.mean( X_td, axis=0 )
-            Xs = np.std( X_td, axis=0 )
+            Xm = np.mean( X__td, axis=0 )
+            Xs = np.std( X__td, axis=0 )
             if np.min( Xs ) > 0:
                 raise ValueError('`X` contains degenerate dimension')
-            X_td = ( X_td - Xm[na, :] ) / Xs[na, :]
+            X__td = ( X__td - Xm[na, :] ) / Xs[na, :]
             self.normalisation_filter = Bunch({ 'X_mean': Xm, 'X_std': Xs })
         # whiten, if required
         if whiten:
@@ -321,11 +321,11 @@ class Data( AutoReloader ):
         self.X_is_whitened = whiten
         self.X_has_constant = add_constant
         # save the data
-        self.X_td, self.y_t = X_td, y_t
+        self.X__td, self.y__t = X__td, y__t
         # sizes
-        T, D = self.T, self.D = shape( self.X_td )
-        if len( y_t ) != self.T:
-            raise ValueError('# time bins in `X_td` and `y_t` do not match')
+        T, D = self.T, self.D = shape( self.X__td )
+        if len( y__t ) != self.T:
+            raise ValueError('# time bins in `X__td` and `y__t` do not match')
 
     def announce( self, *a, **kw ):
         return self._announcer.announce( *a, **kw )
@@ -433,8 +433,8 @@ class Solver( AutoCR ):
             the testing data set. 
 
         - `nonlinearity` : the output nonlinearity. Either 'exp' or 'soft'.
-            * 'exp'  :  mu_t = exp( z_t )
-            * 'soft' :  mu_t = log_2( 1 + exp( z_t ) )
+            * 'exp'  :  mu__t = exp( z__t )
+            * 'soft' :  mu__t = log_2( 1 + exp( z__t ) )
 
         Verbosity:
 
@@ -983,11 +983,11 @@ class Solver( AutoCR ):
         block_lengths[0::2] = training_lengths
         block_lengths[1::2] = testing_lengths
         block_is_training[0::2] = True
-        block_start_idx = np.cumsum(np.hstack([[0], block_lengths]))[:-1]
+        block_star__et_idx = np.cumsum(np.hstack([[0], block_lengths]))[:-1]
         block_end_idx = np.cumsum(block_lengths)
         # create slices
         block_slices = A([ slice(idx_i, idx_j, None) 
-                for idx_i, idx_j in zip(block_start_idx, block_end_idx) ])
+                for idx_i, idx_j in zip(block_star__et_idx, block_end_idx) ])
         training_slices = block_slices[ block_is_training ]
         testing_slices = block_slices[ ~block_is_training ]
         # randomly rotate
@@ -1040,7 +1040,7 @@ class Solver( AutoCR ):
             count += s_len
         return new_sig
 
-    def slice_by_testing( self, sig ):
+    def slice_by__testing( self, sig ):
         """ Retrieves the testing slices of a signal. """
         if not self.has_testing_regions:
             return A([])
@@ -1327,7 +1327,7 @@ class Solver( AutoCR ):
     """
 
     @cached
-    def k_star( v ):
+    def k_star__e( v ):
         """ Extract the dim-reduced `k` from `v`. Can change in subclasses. """
         return v
 
@@ -1337,18 +1337,20 @@ class Solver( AutoCR ):
     ================
 
     We assume that the prior on `k` is a zero-mean multivariate Gaussian, in 
-    which case we need to specify its covariance matrix, `C`. This covariance
-    matrix will be a function of the hyperparameters, `theta`. In the most
-    general form, `C` will be an arbitrary covariance matrix; however, in
-    some models it might have specific structure. For notational simplicity,
-    we distinguish here between two forms: where it is a diagonal matrix,
-    in which case the diagonal vector is referred to as `l`; and where it is 
-    a non-diagonal matrix, in which case it is referred to as `C`. 
-    In this latter case, `l` is still used as the diagonal in the 
-    eigendecomposition of `C`.
+    which case we need to specify its (D x D) covariance matrix, `C__dd`. 
+    This covariance matrix will be a function of the hyperparameters, `theta`. 
+    In the most general form, `C__dd` will be an arbitrary covariance matrix; 
+    however, in some models it might have specific structure. For notational 
+    simplicity, we distinguish here between two forms: where it is a diagonal 
+    matrix, in which case the diagonal vector is referred to as `l__d`; and 
+    where it is a non-diagonal matrix, in which case it is referred to as 
+    `C__dd`. In this latter case, `l__d` is still used as the diagonal in the 
+    eigendecomposition of `C__dd`.
     
-    The definition of `C` or `l` must be given in a subclass. If `l` is
-    given, then the attribute `C_is_diagonal` must be set to False.
+    The definition of `C__dd` or `l__d` must be given in a subclass. If `l__d` 
+    is given, then the attribute `C_is_diagonal` must be set to False. In this
+    case, it is assumed that the parametric form of the covariance matrix
+    ensures it is *always* diagonal.
     
     """
 
@@ -1357,20 +1359,20 @@ class Solver( AutoCR ):
         raise TypeError( 'must subclass to define `%s` behaviour' % f_str )
 
     @cached
-    def C( C_is_diagonal ):
+    def C__dd( C_is_diagonal ):
         """ Prior covariance on `k` """
         if C_is_diagonal:
             return None
         else:
-            self._raise_must_subclass('C')
+            self._raise_must_subclass('C__dd')
         
     @cached
-    def dC_dtheta():
+    def dC_dtheta__idd():
         """ Jacobian of prior covariance wrt `theta` """
         self._raise_must_subclass('dC_dtheta')
 
     @cached
-    def C_eig( C, C_is_diagonal ):
+    def C_eig( C__d, C_is_diagonal ):
         """ Eigendecomposition of the prior covariance matrix. """
         if C_is_diagonal:
             return None
@@ -1379,25 +1381,25 @@ class Solver( AutoCR ):
         except np.linalg.LinAlgError:
             l, Q = eigh( C * 1e4 )
             l /= 1e4
-        return {'l':l, 'Q':Q}
+        return {'l__d':l, 'Q__dd':Q}
 
     @cached( cskip = ('C_is_diagonal', True, 'C_eig') )
-    def l( C_is_diagonal, C_eig ):
+    def l__d( C_is_diagonal, C_eig ):
         """ Return the diagonal covariance (in the rotated space if req'd) """
         if C_is_diagonal:
-            self._raise_must_subclass('l')
+            self._raise_must_subclass('l__d')
         else:
-            return C_eig['l']
+            return C_eig['l__d']
        
     @cached
-    def dl_dtheta():
+    def dl_dtheta__id():
         """ Jacobian of the diagonal prior covariance wrt `theta` """
         self._raise_must_subclass('dl_dtheta')
 
     @cached
-    def dims( l, cutoff_lambda ):
-        """ Dimensions to keep, based on the spectrum """
-        return ( l/maxabs(l) > cutoff_lambda )
+    def dims( l__d, cutoff_lambda ):
+        """ Boolean vector of dimensions to keep, from the eigenspectrum. """
+        return ( l__d/maxabs(l__d) > cutoff_lambda )
 
     @cached
     def D_star( dims ):
@@ -1406,82 +1408,82 @@ class Solver( AutoCR ):
 
     @cached
     def required_v_length( D_star ):
-        """ Number of parameters in `v`, based on `len(k_star)` """
+        """ Number of parameters in `v`, based on `len(k_star__e)` """
         return D_star
 
     @cached
-    def R( C_eig, dims, C_is_diagonal ):
-        """ Rotation and projection matrix, in one """
-        return C_eig['Qk'][ :, dims ].T
+    def R__de( C_eig, dims, C_is_diagonal ):
+        """ Rotation and projection matrix: *-space to full-space. """
+        return C_eig['Q'][ :, dims ].T
 
-    @cached( cskip=('C_is_diagonal', True, ['C_eig', 'R', 'D_star']) )
-    def R_is_identity( C_is_diagonal, C_eig, dims, R, D_star ):
-        """ Is the rotation/projection operator the identity """
+    @cached( cskip=('C_is_diagonal', True, ['C_eig', 'R__de', 'D_star']) )
+    def R_is_identity( C_is_diagonal, C_eig, dims, R__de, D_star ):
+        """ Is the rotation/projection operator the identity. """
         if C_is_diagonal:
             return np.all(dims) 
         else:
-            return ( np.all(dims) and np.array_equal(R, eye(D_star)) )
+            return ( np.all(dims) and np.array_equal(R__de, eye(D_star)) )
 
     @cached( cskip=[ 
-        ('R_is_identity', True, ['dims', 'R']),
-        ('C_is_diagonal', True, 'R') ] )
-    def X_star_td( R_is_identity, C_is_diagonal, data, dims, R ):
+        ('R_is_identity', True, ['dims', 'R__de']),
+        ('C_is_diagonal', True, 'R__de') ] )
+    def X_star__te( R_is_identity, C_is_diagonal, data, dims, R__de ):
         """ Dimensionality-reduced matrix of regressors """ 
         if R_is_identity:
-            return data.X
+            return data.X__td
         elif C_is_diagonal:
-            return data.X[:, dims]
+            return data.X__td[:, dims]
         else:
-            return dot( data.X, R.T )
+            return dot( data.X__td, R__de.T )
 
     @cached
-    def l_star( l, dims ):
-        """ Diagonalised prior covariance in reduced space. """
-        return l[ dims ]
+    def l_star__e( l__d, dims ):
+        """ Diagonalised prior covariance in *-space. """
+        return l__d[ dims ]
 
     @cached
-    def l_star_inv( l_star ):
+    def l_star_inv__e( l_star__e ):
         """ Inverse of diagonal of prior covariance in reduced space. """
-        return 1. / l_star
+        return 1. / l_star__e
 
     @cached
-    def logdet_C_star( l_star ):
-        return np.sum(log(l_star))
+    def logdet_C_star( l_star__e ):
+        return np.sum(log(l_star__e))
 
     @cached( cskip=[
-        ('R_is_identity', True, ['dims', 'R', 'D']),
-        ('C_is_diagonal', True, ['R']) ])
-    def k_d( k_star, R_is_identity, C_is_diagonal, dims, R, D ):
-        """ Expand the reduced-space kernel to the full kernel. """
+        ('R_is_identity', True, ['dims', 'R__de', 'D']),
+        ('C_is_diagonal', True, ['R__de']) ])
+    def k__d( k_star__e, R_is_identity, C_is_diagonal, dims, R__de, D ):
+        """ Expand the *-space kernel to the full kernel. """
         if R_is_identity:
-            return k_star
+            return k_star__e
         elif C_is_diagonal:
-            k_d = zeros( D )
-            k_d[ dims ] = k_star
-            return k_d
+            k__d = zeros( D )
+            k__d[ dims ] = k_star__e
+            return k__d
         else:
-            return dot( R.T, k_star )
+            return dot( R__de.T, k_star__e )
 
-    def reproject_to_v( self, k_d=None, posterior=None ):
-        """ Calculates `v` from `k_d`. Does not change object's state. 
+    def reproject_to_v( self, k__d=None, posterior=None ):
+        """ Calculates `v` from `k__d`. Does not change object's state. 
         
-        Can either provide `k_d` *or* a posterior which contains this attribute.
+        Can either provide `k__d` *or* a posterior containing this attribute.
         
         """
         # check inputs
-        if [k_d, posterior].count(None) != 1:
-            raise ValueError('either provide `k_d` or posterior')
+        if [k__d, posterior].count(None) != 1:
+            raise ValueError('either provide `k__d` or `posterior`')
         # provide a posterior
         elif posterior is not None:
-            return self.reproject_to_v( k_d=posterior.k_d )
-        # provide a `k_d` value
-        elif k_d is not None:
+            return self.reproject_to_v( k__d=posterior.k__d )
+        # provide a `k__d` value
+        elif k__d is not None:
             if self.R_is_identity:
-                return k_d
+                return k__d
             elif self.C_is_diagonal:
-                return k_d[ self.dims ]
+                return k__d[ self.dims ]
             else:
-                return dot( self.R, k_d )
+                return dot( self.R__de, k__d )
 
     """
     ====================
@@ -1493,52 +1495,53 @@ class Solver( AutoCR ):
         raise ValueError('unknown nonlinearity: %s' % self.nonlinearity )
 
     @cached
-    def y_t_training( data, slice_by_training ):
+    def y_training__t( data, slice_by_training ):
         """ The training data. """
-        return slice_by_training( data.y_t )
+        return slice_by_training( data.y__t )
 
     @cached
-    def z_t( X_star_td, k_star ):
-        """ Argument to the nonlinearity """
-        return dot( X_star_td, k_star )
+    def z__t( X_star__te, k_star__e ):
+        """ Argument to the nonlinearity. """
+        return dot( X_star__te, k_star__e )
 
     @cached
-    def ez_t( z_t ):
-        return exp( z_t )
+    def ez__t( z__t ):
+        """ Intermediate computation. """
+        return exp( z__t )
 
     @cached
-    def mu_t( ez_t, nonlinearity ):
+    def mu__t( ez__t, nonlinearity ):
         """ Expected firing rate """
         if nonlinearity == 'exp':
-            return ez_t
+            return ez__t
         elif nonlinearity == 'soft':
-            return log( 1 + ez_t ) / log(2)
+            return log( 1 + ez__t ) / log(2)
         else:
             self._raise_bad_nonlinearity()
 
-    @cached( cskip = ('nonlinearity', 'exp', 'mu_t') )
-    def log_mu_t( nonlinearity, z_t, mu_t ):
+    @cached( cskip = ('nonlinearity', 'exp', 'mu__t') )
+    def log_mu__t( nonlinearity, z__t, mu__t ):
         """ Log of expected firing rate """
         if nonlinearity == 'exp':
-            return z_t
+            return z__t
         else:
-            return log( mu_t )
+            return log( mu__t )
 
     @cached
-    def LL_training( y_t_training, slice_by_training, mu_t, log_mu_t ):
+    def LL_training( y_training__t, slice_by_training, mu__t, log_mu__t ):
         """ Log likelihood on `k` given training data. """
         # select the training data only
-        mu_t = slice_by_training( mu_t )
-        log_mu_t = slice_by_training( log_mu_t )
+        mu__t = slice_by_training( mu__t )
+        log_mu__t = slice_by_training( log_mu__t )
         # compute
-        return -np.sum( mu_t ) + dot( y_t_training, log_mu_t )
+        return -np.sum( mu__t ) + dot( y_training__t, log_mu__t )
 
     @cached
-    def LPrior( logdet_C_star, k_star, l_star_inv ):
+    def LPrior( logdet_C_star, k_star__e, l_star_inv__e ):
         """ Log prior on `k`. """
         return sum([
             -0.5 * logdet_C_star, 
-            -0.5 * dot( k_star.T, l_star_inv * k_star ) ])
+            -0.5 * dot( k_star__e, l_star_inv__e * k_star__e ) ])
 
     @cached
     def LP_training( LL_training, LPrior ):
@@ -1548,37 +1551,38 @@ class Solver( AutoCR ):
     """ Jacobian """
 
     @cached
-    def resid_t( mu_t, data, zero_during_testing ):
+    def resid__t( mu__t, data, zero_during_testing ):
         """ Residual spike counts. Zeroed outside of training data. """
-        return zero_during_testing( data.y_t - mu_t )
+        return zero_during_testing( data.y__t - mu__t )
 
     @cached
-    def dLL_training( resid_t, X_star_td ):
-        """ Jacobian of training log likelihood wrt `k_star`. """
-        return dot( X_star_td.T, resid_t )
+    def dLL_training( resid__t, X_star__te ):
+        """ Jacobian of training log likelihood wrt `k_star__e`. """
+        return dot( X_star__te.T, resid__t )
 
     @cached
-    def dLPrior( l_star_inv, k_star ):
-        """ Jacobian of log prior wrt `k_star`. """
-        return -l_star_inv * k_star
+    def dLPrior( l_star_inv__e, k_star__e ):
+        """ Jacobian of log prior wrt `k_star__e`. """
+        return -l_star_inv__e * k_star__e
 
     @cached
     def dLP_training( dLL_training, dLPrior ):
-        """ Jacobian of training log posterior wrt `k_star`. """
+        """ Jacobian of training log posterior wrt `k_star__e`. """
         return dLL_training + dLPrior
 
     """ Hessian """
 
     @cached
-    def d2LP_training( mu_t, D_star, slice_by_training, X_star_td, l_star_inv ):
-        """ Hessian of training log prob wrt `k_star`. """
+    def d2LP_training( mu__t, D_star, slice_by_training, X_star__te, 
+            l_star_inv__e ):
+        """ Hessian of training log prob wrt `k_star__e`. """
         # training data only
-        mu_t = slice_by_training( mu_t )
-        X_star_td = slice_by_training( X_star_td )
+        mu__t = slice_by_training( mu__t )
+        X_star__te = slice_by_training( X_star__te )
         # evaluate d2LL
-        d2LP = -dot( X_star_td.T, mu_t[:, na] * X_star_td )
+        d2LP = -dot( X_star__te.T, mu__t[:, na] * X_star__te )
         # add d2LPrior to the diagonal
-        d2LP[ range(D_star), range(D_star) ] -= l_star_inv
+        d2LP[ range(D_star), range(D_star) ] -= l_star_inv__e
         return d2LP
     
     """
@@ -1608,72 +1612,75 @@ class Solver( AutoCR ):
     =============================
 
     A Laplace approximation is taken for the posterior. This is initially
-    expressed in reduced-coordinate space as `Normal( k_star, Lambda_star )`,
-    and can be expanded to `Normal( k_d, Lambda )`. Here, `Lambda` is
-    the posterior covariance.
+    expressed in reduced-coordinate space as 
+        `Normal( k_star__e, Lambda_star__ee__ee )`,
+    and can be expanded to 
+        `Normal( k__d, Lambda__dd )`. 
+    Here, `Lambda__dd` is the posterior covariance.
 
     Note that these can only be calculated for a posterior, as they depend
-    on knowing the posterior mode (`k_star`), and the curvature around
+    on knowing the posterior mode (`k_star__e`), and the curvature around
     the mode.
 
     """
     
     @cached( cskip = ('is_posterior', False, 'negLP_hessian') )
-    def Lambdainv_star( is_posterior, negLP_hessian ):
+    def Lambdainv_star__ee( is_posterior, negLP_hessian ):
         """ Posterior precision, in reduced space. """
         if not is_posterior:
             raise TypeError('attribute only available for posterior.')
         return negLP_hessian
 
     @cached
-    def Lambda_star( Lambdainv_star ):
+    def Lambda_star__ee( Lambdainv_star__ee ):
         """ Posterior covariance, in reduced space. """
-        return inv( Lambdainv_star )
+        return inv( Lambdainv_star__ee )
 
     @cached( cskip = [
-        ('R_is_identity', True, ['R', 'D', 'dims']),
-        ('C_is_diagonal', True, 'R') ])
-    def Lambda( Lambda_star, R_is_identity, C_is_diagonal, dims, R, D ):
+        ('R_is_identity', True, ['R__de', 'D', 'dims']),
+        ('C_is_diagonal', True, 'R__de') ])
+    def Lambda__dd( Lambda_star__ee, R_is_identity, C_is_diagonal, dims, 
+            R__de, D ):
         """ Posterior covariance, in full space. """
         # if there is no dimensionality reduction
         if R_is_identity:
-            return Lambda_star
+            return Lambda_star__ee
         # if the dimensionality reduction is just a projection
         elif C_is_diagonal:
-            Lambda = zeros( (D, D) )
+            Lambda__dd = zeros( (D, D) )
             dim_idxs = np.nonzero( dims )[0]
-            for ii, dd in enumerate( dim_idxs ):
-                Lambda[ dd, dims ] = Lambda_star[ ii, : ]
-            return Lambda
+            for e, d in enumerate( dim_idxs ):
+                Lambda__dd[ d, dims ] = Lambda_star__ee[ e, : ]
+            return Lambda__dd
         # if the dimensionality reduction is rotation + projection
         else:
-            return mdot( R.T, Lambda_k_star, R )
+            return mdot( R__de, Lambda_star__ee, R__de.T )
 
     @cached
-    def logdet_Lambdainv_star( Lambdainv_star ):
+    def logdet_Lambdainv_star( Lambdainv_star__ee ):
         """ log |Lambda ^ -1|. For evidence calculation. """
-        return logdet( Lambdainv_star )
+        return logdet( Lambdainv_star__ee )
 
     @cached
     def evidence_components( LL_training, logdet_C_star, 
-            logdet_Lambdainv_star, k_star, l_star_inv ):
+            logdet_Lambdainv_star, k_star__e, l_star_inv__e ):
         """ Terms of the log evidence, assuming Laplace posterior. """
         return A([ 
             LL_training, 
             -0.5 * ( logdet_C_star + logdet_Lambdainv_star ),
-            -0.5 * dot( k_star, l_star_inv * k_star ) ])
+            -0.5 * dot( k_star__e, l_star_inv__e * k_star__e ) ])
     
     @cached
     def evidence( evidence_components ):
         """ Log evidence, assuming Laplace posterior. """
         return np.sum( evidence_components )
 
-    @cached( cskip = ('is_posterior', False, ['X_star_td', 'mu_t']) )
-    def E_star( is_posterior, X_star_td, mu_t ):
+    @cached( cskip = ('is_posterior', False, ['X_star__te', 'mu__t']) )
+    def E_star__ee( is_posterior, X_star__te, mu__t ):
         """ Hessian of neg log likelihood, for local evidence approx """
         if not is_posterior:
             raise TypeError('attribute only available for posterior.')
-        return dot( X_star_td.T, mu_t[:, na] * X_star_td )
+        return dot( X_star__te.T, mu__t[:, na] * X_star__te )
 
     """
     ===============
@@ -1699,44 +1706,44 @@ class Solver( AutoCR ):
     """
 
     @cached
-    def C_c_star( posterior, C ):
+    def C_c_star__ee( posterior, C__dd ):
         """ Covariance at theta_c, in *-space induced by theta_n. """
         # if theta_n has no dim reduction
         if posterior.R_is_identity:
-            return C
+            return C__dd
         # otherwise project
         else:
-            return mdot( posterior.R, C, posterior.R.T )
+            return mdot( posterior.R__de, C, posterior.R__de.T )
         # TO DO: if posterior.C_is_diagonal
 
     @cached
-    def C_c_eig( C_c_star ):
+    def C_c_eig( C_c_star__ee ):
         """ Eigendecomposition of covariance at `theta_c` """
         try:
-            l, Q = eigh( C_c_star )
+            l, Q = eigh( C_c_star__ee )
         except np.linalg.LinAlgError:
-            l, Q = eigh( C_c_star * 1e4 )
+            l, Q = eigh( C_c_star__ee * 1e4 )
             l /= 1e4
-        return {'l_c_star':l, 'Q_c_star':Q}
+        return {'l_c_star__e':l, 'Q_c_star__ee':Q}
 
     @cached( cskip=[('C_is_diagonal', True, 'C_c_eig')] )
-    def l_c_star( C_is_diagonal, posterior, l, C_c_eig ):
+    def l_c_star__e( C_is_diagonal, posterior, l__d, C_c_eig ):
         """ Diagonalised covariance at theta_c, in *-space """
         if C_is_diagonal:
-            return l[ posterior.dims ]
+            return l__d[ posterior.dims ]
         else:
-            return C_c_eig['l_c_star']
+            return C_c_eig['l_c_star__e']
 
     @cached
-    def l_c_star_is_zero( l_c_star ):
+    def l_c_star_is_zero( l_c_star__e ):
         """ If the prior covariance is zero (can happen, safeguard). """
-        return ( maxabs( l_c_star) == 0 )
+        return ( maxabs( l_c_star__e) == 0 )
 
     @cached
-    def dims_c_star( l_c_star, cutoff_lambda ):
+    def dims_c_star( l_c_star__e, cutoff_lambda ):
         """ Bool array of dimensions to keep in *-space. """
-        cutoff = cutoff_lambda * maxabs(l_c_star)
-        return ( l_c_star >= cutoff )
+        cutoff = cutoff_lambda * maxabs(l_c_star__e)
+        return ( l_c_star__e >= cutoff )
 
     @cached
     def l_c_star_is_singular( dims_c_star ):
@@ -1758,32 +1765,32 @@ class Solver( AutoCR ):
                 return 'rotate'
 
     @cached
-    def R_c_star( C_c_eig, dims_c_star ):
-        """ Projection+rotation matrix for 2nd dim reduction (if applicable) """
+    def R_c_star__ef( C_c_eig, dims_c_star ):
+        """ Projection+rotation for 2nd dim reduction: +-space to *-space """
         return C_c_eig['Q_c_star'][:, dims_c_star].T
 
     @cached( cskip=[
         ('second_dr_k', 'none', 'C_c_eig'), 
         ('second_dr_k', 'rotate', 'C_c_eig'), 
         ('second_dr_k', 'project', 'C_c_eig') ])
-    def l_c_plus( second_dr_k, C_c_eig, l_c_star, dims_c_star ):
+    def l_c_plus__f( second_dr_k, C_c_eig, l_c_star__e, dims_c_star ):
         """ Diagonal covariance matrix for `theta_c`, in +-space. """
         if second_dr_k in ['none', 'rotate']:
-            return l_c_star
+            return l_c_star__e
         elif second_dr_k == 'project':
-            return l_c_star[ dims_c_star ]
+            return l_c_star__e[ dims_c_star ]
         else:
-            return C_c_eig['l_c_star'][dims_c_star]
+            return C_c_eig['l_c_star__e'][dims_c_star]
 
     @cached
-    def C_c_plus( l_c_plus ):
+    def C_c_plus__ff( l_c_plus__f ):
         """ Covariance matrix for `theta_c`, in +-space. """
-        return diag( l_c_plus )
+        return diag( l_c_plus__f )
 
     @cached
-    def Cinv_c_plus( l_c_plus ):
+    def Cinv_c_plus__ff( l_c_plus__f ):
         """ Precision matrix for `theta_c`, in +-space. """
-        return diag( 1. / l_c_plus )
+        return diag( 1. / l_c_plus__f )
 
     @cached
     def D_plus( dims_c_star ):
@@ -1791,152 +1798,152 @@ class Solver( AutoCR ):
         return np.sum( dims_c_star )
 
     @cached( cskip = [
-        ('second_dr_k', 'none', 'R_c_star'),
-        ('second_dr_k', 'project', 'R_c_star') ])
-    def E_n_plus( second_dr_k, posterior, dims_c_star, R_c_star ):
+        ('second_dr_k', 'none', 'R_c_star__ef'),
+        ('second_dr_k', 'project', 'R_c_star__ef') ])
+    def E_n_plus__ff( second_dr_k, posterior, dims_c_star, R_c_star__ef ):
         """ Hessian of -LL at `theta_n` posterior mode, in +-space. """
         # retrieve
-        E = posterior.E_star
+        E__ee = posterior.E_star__ee
         # dimensionality reduction from *-space to +-space
         if second_dr_k == 'none':
-            return E
+            return E__ee
         elif second_dr_k == 'project':
             idx = dims_c_star
-            return E[idx, :][:, idx]
+            return E__ee[idx, :][:, idx]
         else: 
-            return mdot( R_c_star, E, R_c_star.T )
+            return mdot( R_c_star__ef.T, E__ee, R_c_star__ef )
 
     @cached( cskip = [
-        ('second_dr_k', 'none', 'R_c_star'),
-        ('second_dr_k', 'project', 'R_c_star') ])
-    def Lambdainv_n_plus(second_dr_k, posterior, dims_c_star, R_c_star):
+        ('second_dr_k', 'none', 'R_c_star__ef'),
+        ('second_dr_k', 'project', 'R_c_star__ef') ])
+    def Lambdainv_n_plus__ff(second_dr_k, posterior, dims_c_star, R_c_star__ef):
         """ Posterior precision at `theta_n`, in +-space. """
         # retrieve
-        Laminv = posterior.Lambdainv_star
+        Laminv__ee = posterior.Lambdainv_star__ee
         # dimensionality reduction from *-space to +-space
         if second_dr_k == 'none':
-            return Laminv
+            return Laminv__ee
         elif second_dr_k == 'project':
             idx = dims_c_star
-            return Laminv[idx, :][:, idx]
+            return Laminv__ee[idx, :][:, idx]
         else: 
-            return mdot( R_c_star, Laminv, R_c_star.T )
+            return mdot( R_c_star__ef.T, Laminv__ee, R_c_star__ef )
 
     @cached( cskip = [
-        ('second_dr_k', 'none', 'R_c_star'),
-        ('second_dr_k', 'project', 'R_c_star') ])
-    def k_n_plus( second_dr_k, posterior, dims_c_star, R_c_star ):
+        ('second_dr_k', 'none', 'R_c_star__ef'),
+        ('second_dr_k', 'project', 'R_c_star__ef') ])
+    def k_n_plus__f( second_dr_k, posterior, dims_c_star, R_c_star__ef ):
         """ Posterior mode at `theta_n`, in +-space. """
         # retrieve
-        k_star = posterior.k_star
+        k_star__e = posterior.k_star__e
         # dimensionality reduction from *-space to +-space
         if second_dr_k == 'none':
-            return k_star
+            return k_star__e
         elif second_dr_k == 'project':
-            return k_star[ dims_c_star ]
+            return k_star__e[ dims_c_star ]
         else: 
-            return dot( R_c_star, k_star )
+            return dot( R_c_star__ef.T, k_star__e )
 
     @cached( cskip = [
-        ('second_dr_k', 'none', 'R_c_star'),
-        ('second_dr_k', 'project', 'R_c_star') ])
-    def X_plus( second_dr_k, posterior, dims_c_star, R_c_star ):
+        ('second_dr_k', 'none', 'R_c_star__ef'),
+        ('second_dr_k', 'project', 'R_c_star__ef') ])
+    def X_plus( second_dr_k, posterior, dims_c_star, R_c_star__ef ):
         """ Regressor matrix in +-space. """
         # retrieve
-        X_star_td = posterior.X_star_td
+        X_star__te = posterior.X_star__te
         # dimensionality reduction from *-space to +-space
         if second_dr_k == 'none':
-            return X_star_td
+            return X_star__te
         elif second_dr_k == 'project':
-            return X_star_td[ :, dims_c_star ]
+            return X_star__te[ :, dims_c_star ]
         else: 
-            return dot( X_star_td, R_c_star.T )
+            return dot( X_star__te, R_c_star__ef )
 
     """ Approximate posterior at candidate theta """
 
     @cached
-    def Lambdainv_c_plus( E_n_plus, Cinv_c_plus ):
+    def Lambdainv_c_plus__ff( E_n_plus__ff, Cinv_c_plus__ff ):
         """ Approximate precision matrix at `theta_c`, in +-space. """
-        return E_n_plus + Cinv_c_plus
+        return E_n_plus__ff + Cinv_c_plus__ff
 
     @cached
-    def Lambda_c_plus( Lambdainv_c_plus ):
+    def Lambda_c_plus__ff( Lambdainv_c_plus__ff ):
         """ Approximate covariance matrix at `theta_c`, in +-space. """
-        return inv( Lambdainv_c_plus )
+        return inv( Lambdainv_c_plus__ff )
 
     @cached
-    def k_c_plus( Lambdainv_c_plus, Lambdainv_n_plus, k_n_plus ):
-        """ Approximate posterior maode at `theta_c`, in +-space. """
+    def k_c_plus__f( Lambdainv_c_plus__ff, Lambdainv_n_plus__ff, k_n_plus__f ):
+        """ Approximate posterior mode at `theta_c`, in +-space. """
         return ldiv( 
-                Lambdainv_c_plus, 
-                dot(Lambdainv_n_plus, k_n_plus) )
+                Lambdainv_c_plus__ff, 
+                dot(Lambdainv_n_plus__ff, k_n_plus__f) )
 
     @cached( cskip = [
-        ('second_dr_k', 'none', 'R_c_star'),
-        ('second_dr_k', 'project', 'R_c_star') ])
-    def k_c( k_c_plus, C_is_diagonal, second_dr_k, R_c_star, dims_c_star,
-            D, posterior ):
-        """ Approximate posterior maode at `theta_c`, in full space. """
+        ('second_dr_k', 'none', 'R_c_star__ef'),
+        ('second_dr_k', 'project', 'R_c_star__ef') ])
+    def k_c__d( k_c_plus__f, C_is_diagonal, second_dr_k, R_c_star__ef, 
+            dims_c_star, D, posterior ):
+        """ Approximate posterior mode at `theta_c`, in full space. """
         # to *-space
         if second_dr_k == 'none':
-            k_c_star = k_c_plus
+            k_c_star__e = k_c_plus__f
         elif second_dr_k == 'project':
-            k_c_star = np.zeros( posterior.D_star )
-            k_c_star[ dims_c_star ] = k_c_plus
+            k_c_star__e = np.zeros( posterior.D_star )
+            k_c_star__e[ dims_c_star ] = k_c_plus__f
         else:
-            k_c_star = dot( R_c_star.T, k_c_plus )
+            k_c_star__e = dot( R_c_star__ef.T, k_c_plus__f )
         # to full space
         if posterior.R_is_identity:
-            return k_c_star
+            return k_c_star__e
         elif C_is_diagonal:
-            k = np.zeros( D )
-            k[ posterior.dims ] = k_c_star
-            return k
+            k__d = np.zeros( D )
+            k__d[ posterior.dims ] = k_c_star__e
+            return k__d
         else:
-            return dot( posterior.R.T, k_c_star )
+            return dot( posterior.R__de, k_c_star__e )
 
     @cached
-    def z_c_t( X_plus, k_c_plus ):
+    def z_c__t( X_plus, k_c_plus__f ):
         """ Argument to nonlinearity for `theta_c` approx posterior mode. """
-        return dot( X_plus, k_c_plus )
+        return dot( X_plus, k_c_plus__f )
 
     @cached
-    def mu_c_t( exp_z_c_t, nonlinearity ):
+    def mu_c__t( z_c__t, nonlinearity ):
         """ Expected firing rate for `theta_c` approx posterior mode. """
         if nonlinearity == 'exp':
-            return exp( z_c_t )
+            return exp( z_c__t )
         elif nonlinearity == 'soft':
-            return log( 1 + exp(z_c_t) ) / log(2)
+            return log( 1 + exp(z_c__t) ) / log(2)
         else:
             self._raise_bad_nonlinearity()
 
-    @cached( cskip = ('nonlinearity', 'exp', 'mu_c_t') )
-    def log_mu_c_t( nonlinearity, z_t, mu_t ):
+    @cached( cskip = ('nonlinearity', 'exp', 'mu_c__t') )
+    def log_mu_c__t( nonlinearity, z__t, mu__t ):
         """ Log of expected firing rate for `theta_c` approx posterior mode """
         if nonlinearity == 'exp':
-            return z_c_t
+            return z_c__t
         else:
-            return log( mu_c_t )
+            return log( mu_c__t )
 
     """ Local evidence at candidate theta """
 
     @cached
-    def local_evidence_components( mu_c_t, log_mu_c_t, slice_by_training,
-            y_t_training, l_c_plus, E_n_plus, D_plus, k_c_plus, posterior_h ):
+    def local_evidence_components( mu_c__t, log_mu_c__t, slice_by_training,
+            y_training__t, l_c_plus__f, E_n_plus__ff, D_plus, k_c_plus__f ):
         """ Components of the approx. evidence at `theta_c`. """
         # log likelihood
-        mu_t = slice_by_training( mu_c_t )
-        log_mu_t = slice_by_training( log_mu_c_t )
-        LL = -np.sum( mu_t ) + dot( y_t_training, log_mu_t )
+        mu__t = slice_by_training( mu_c__t )
+        log_mu__t = slice_by_training( log_mu_c__t )
+        LL = -np.sum( mu__t ) + dot( y_training__t, log_mu__t )
         if ~np.isfinite( LL ):
             return -np.inf
-        if len( k_c_plus ) == 0:
+        if len( k_c_plus__f ) == 0:
             return LL
         # psi(theta)
         psi = A([ 
             LL,
-            -0.5 * logdet( l_c_plus[:, na] * E_n_plus + eye(D_plus) ),
-            -0.5 * dot( k_c_plus, k_c_plus / l_c_plus ) ])
+            -0.5 * logdet( l_c_plus__f[:, na] * E_n_plus__ff + eye(D_plus) ),
+            -0.5 * dot( k_c_plus__f, k_c_plus__f / l_c_plus__f ) ])
         return psi
 
     @cached
@@ -1950,88 +1957,95 @@ class Solver( AutoCR ):
         return -local_evidence
 
     @cached( cskip=[ 
-        ('C_is_diagonal', True, ['R_c_star', 'dC_dtheta']),
-        ('C_is_diagonal', False, ['dL_dtheta']) ])
+        ('C_is_diagonal', True, ['R_c_star__ef', 'dC_dtheta__idd']),
+        ('C_is_diagonal', False, ['dl_dtheta__id']) ])
     def LE_jacobian( C_is_diagonal, second_dr_k, 
-            posterior, dC_dtheta, dl_dtheta, R_c_star, data, mu_c_t,
-            X_plus, slice_by_training, C_c_plus, E_n_plus,
-            Lambda_c_plus, Cinv_c_plus, k_c_plus, dims_c_star,
-            l_c_plus, N_theta_k, Lambdainv_c_plus ):
+            posterior, dC_dtheta__idd, dl_dtheta_id, R_c_star__ef, data, 
+            mu_c__t, X_plus__tf, slice_by_training, C_c_plus__ff, E_n_plus__ff,
+            Lambda_c_plus__ff, Cinv_c_plus__ff, k_c_plus__f, dims_c_star,
+            l_c_plus__f, N_theta_k, Lambdainv_c_plus__ff ):
         """ Jacobian of local evidence objective. """
         # diagonal case
         if C_is_diagonal:
             # project to *-space
             if posterior.R_is_identity:
-                dl_dtheta_star = dl_dtheta
+                dl_dtheta_star__ie = dl_dtheta__id
             else:
-                dl_dtheta_star = [ dl[ posterior.dims ] for dl in dl_dtheta ]
+                dl_dtheta_star__ie = [ 
+                        dl[ posterior.dims ] for dl in dl_dtheta__id ]
             # project to +-space
             if second_dr_k == 'none':
-                dl_dtheta_plus = dl_dtheta_star
+                dl_dtheta_plus__if = dl_dtheta_star__ie
             else:
-                dl_dtheta_plus = [dl[ dims_c_star ] for dl in dl_dtheta]
+                dl_dtheta_plus__if = [
+                        dl[ dims_c_star ] for dl in dl_dtheta_star__ie ]
 
             # residuals at candidate solution
-            resid = slice_by_training( data.y - mu_c_t )
+            resid__t = slice_by_training( data.y__t - mu_c__t )
             # intermediate quantities
-            X_plus = slice_by_training( X_plus )
-            dlL_dk_c = dot( X_plus.T, resid )
-            C_En = l_c_plus[:, na] * E_n_plus
-            Lam_Cinv = Lambda_c_plus / l_c_plus[na, :]
-            kT_En_minus_Cinv = dot( 
-                    k_c_plus.T, 
-                    E_n_plus - diag( 1./l_c_plus ) )
+            X_plus__tf = slice_by_training( X_plus__tf )
+            dLL_dk_c__f = dot( X_plus__tf.T, resid__t )
+            C_En__ff = l_c_plus__f[:, na] * E_n_plus__ff
+            Lam_Cinv__ff = Lambda_c_plus__ff / l_c_plus__f[na, :]
+            kT_En_minus_Cinv__f = dot( 
+                    k_c_plus__f.T, 
+                    E_n_plus__ff - diag( 1./l_c_plus__f ) )
             # calculate for each variable in theta
-            dpsi = np.empty( N_theta_k )
+            dpsi__i = np.empty( N_theta_k )
             # derivatives wrt `theta_h` variables
             for j in range( N_theta_k ):
-                dl = dl_dtheta_plus[j]
-                B = Lam_Cinv * ( dl / l_c_plus )[na, :]
-                Bk = ldiv( 
-                        Lambdainv_c_plus, 
-                        k_c_plus * dl / (l_c_plus ** 2) )
-                dpsi[j] = sum([
-                    dot( dlL_dk_c, Bk ),
-                    -0.5 * np.trace( dot(B, C_En) ),
-                    0.5 * dot( kT_En_minus_Cinv, Bk ) ])
+                dl__f = dl_dtheta_plus__if[ j ]
+                B__ff = Lam_Cinv__ff * ( dl__f / l_c_plus__f )[na, :]
+                Bk__f = ldiv( 
+                        Lambdainv_c_plus__ff, 
+                        k_c_plus__f * dl__f / (l_c_plus__f ** 2) )
+                dpsi__i[ j ] = sum([
+                    dot( dLL_dk_c__f, Bk__f ),
+                    -0.5 * np.trace( dot(B__ff, C_En__ff) ),
+                    0.5 * dot( kT_En_minus_Cinv__f, Bk__f ) ])
             # make negative
-            return -dpsi
+            return -dpsi__i
 
         # non-diagonal case
         else:
             # project to *-space
-            if pk.R_is_identity:
-                dC_dtheta_star = dC_dtheta
+            if posterior.R_is_identity:
+                dC_dtheta_star__iee = dC_dtheta__idd
             else:
-                dC_dtheta_star = [ mdot( pk.R, dC, pk.R.T ) 
-                        for dC in dC_dtheta ]
+                dC_dtheta_star__iee = [ 
+                        mdot( posterior.R__de.T, dC__dd, posterior.R__de ) 
+                        for dC__dd in dC_dtheta__idd ]
             # project to +-space
-            dC_dtheta_plus = [ mdot( R_c_star, dC, R_c_star.T ) 
-                    for dC in dC_dtheta_star ]
+            dC_dtheta_plus__iff = [ 
+                    mdot( R_c_star__ef.T, dC__ee, R_c_star__ef ) 
+                    for dC__ee in dC_dtheta_star__iee ]
 
             # residuals at candidate solution
-            resid = slice_by_training( data.y - mu_c )
+            resid = slice_by_training( data.y__t - mu_c__t )
             # intermediate quantities( all in +-space )
-            X_plus = slice_by_training( X_plus )
-            dLL_dk_c = dot( X_plus.T, resid )
-            C_En = dot( C_c_plus, E_n_plus )
-            Lam_Cinv = dot( Lambda_c_plus, Cinv_c_plus )
-            kT_En_minus_Cinv = dot( k_c_plus.T, E_n_plus - Cinv_c_plus )
+            X_plus__tf = slice_by_training( X_plus__tf )
+            dLL_dk_c__f = dot( X_plus__tf.T, resid__t )
+            C_En__ff = dot( C_c_plus__ff, E_n_plus__ff )
+            Lam_Cinv__ff = dot( Lambda_c_plus__ff, Cinv_c_plus__ff )
+            kT_En_minus_Cinv__f = dot( 
+                    k_c_plus__f.T, E_n_plus__ff - Cinv_c_plus__ff )
             # calculate for each variable in theta
-            dpsi = np.empty( N_theta_k )
+            dpsi__i = np.empty( N_theta_k )
             # derivatives wrt `theta_h` variables
             for j in range( N_theta_k ):
-                dC = dC_dtheta_plus[j]
-                B = mdot( Lam_Cinv, dC, Cinv_c_plus )
-                Bk = ldiv( 
-                        Lambdainv_c_plus, 
-                        mdot( Cinv_c_plus, dC, Cinv_c_plus, k_c_plus ) )
-                dpsi[j] = sum([
-                    dot( dLL_dk_c, Bk ),
-                    -0.5 * np.trace( dot(B, C_En) ),
-                    0.5 * dot( kT_En_minus_Cinv, Bk ) ])
+                dC__ff = dC_dtheta_plus__ff[ j ]
+                B__ff = mdot( Lam_Cinv__ff, dC, Cinv_c_plus__ff )
+                Bk__f = ldiv( 
+                        Lambdainv_c_plus__ff, 
+                        mdot( Cinv_c_plus__ff, dC__ff, Cinv_c_plus__ff, 
+                            k_c_plus__f )
+                        )
+                dpsi__i[ j ] = sum([
+                    dot( dLL_dk_c__f, Bk__f ),
+                    -0.5 * np.trace( dot(B__ff, C_En__ff) ),
+                    0.5 * dot( kT_En_minus_Cinv__f, Bk__f ) ])
             # make negative
-            return -dpsi
+            return -dpsi__i
 
     """
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -2087,9 +2101,9 @@ class Solver( AutoCR ):
         """ Check derivatives of diagonal of prior covariance wrt `theta`. 
         
         For both the Jacobian and Hessian, evaluates the analytic derivatives
-        provided by the respective methods `dl_dtheta` and `d2l_dtheta2`,
-        and compares with empirical values, obtained from finite differences
-        method on `l` and `dl_dtheta` respectively.
+        provided by the respective attributes `dl_dtheta__id` and 
+        `d2l_dtheta2__iid`, and compares with empirical values, obtained from 
+        finite differences method on `l__d` and `dl_dtheta__id` respectively.
         
         Typically, this prints out the size of the error between analytic
         and empirical estimates, as a norm. For example, for the Jacobian 
@@ -2124,10 +2138,10 @@ class Solver( AutoCR ):
         N_theta = self.N_theta
         D = self.D
         # calculate l
-        l = self.l
+        l = self.l__d
         # JACOBIAN
         # analytic Jacobian
-        dl = A( self.dl_dtheta )
+        dl = A( self.dl_dtheta__id )
         # helper function
         def dth(i):
             z = zeros( N_theta )
@@ -2137,7 +2151,7 @@ class Solver( AutoCR ):
         edl = np.zeros( (N_theta, D) )
         for i in range(N_theta):
             self.theta = theta0 + dth(i)
-            edl[i] = ( self.L - L ) / eps
+            edl[i] = ( self.l__d - l ) / eps
         # print error
         err1 = norm( dl - edl ) / norm( dl )
         print ' '
@@ -2158,9 +2172,9 @@ class Solver( AutoCR ):
         """ Check derivatives of the prior covariance matrix wrt `theta`. 
         
         For both the Jacobian and Hessian, evaluates the analytic derivatives
-        provided by the respective methods `dC_dtheta` and `d2C_dtheta2`,
-        and compares with empirical values, obtained from finite differences
-        method on `C` and `dC_dtheta` respectively.
+        provided by the respective methods `dC_dtheta__idd` and 
+        `d2C_dtheta2__iidd`, and compares with empirical values, obtained from 
+        finite differences method on `C__dd` and `dC_dtheta__iidd` respectively.
         
         Typically, this prints out the size of the error between analytic
         and empirical estimates, as a norm. For example, for the Jacobian 
@@ -2195,10 +2209,10 @@ class Solver( AutoCR ):
         N_theta = self.N_theta
         D = self.D
         # calculate C
-        C = self.C
+        C = self.C__dd
         # JACOBIAN
         # analytic Jacobian
-        dC = A( self.dC_dtheta )
+        dC = A( self.dC_dtheta__idd )
         # helper function
         def dth(i):
             z = zeros( N_theta )
@@ -2208,7 +2222,7 @@ class Solver( AutoCR ):
         edC = np.zeros( (N_theta, D, D) )
         for i in range(N_theta):
             self.theta = theta0 + dth(i)
-            edC[i] = ( self.C - C ) / eps
+            edC[i] = ( self.C__idd - C ) / eps
         # print error
         err1 = norm( dC - edC ) / norm( dC )
         print ' '
@@ -2231,14 +2245,14 @@ class Solver( AutoCR ):
     """
 
     @cached
-    def y_t_testing( data, slice_by_t_testing ):
-        return slice_by_t_testing( data.y )
+    def y_testing__t( data, slice_by_testing ):
+        return slice_by_testing( data.y__t )
 
     @cached
-    def LL_testing( slice_by_t_testing, mu_t, log_mu_t, y_t_testing ):
-        s = slice_by_t_testing
-        mu_t, log_mu_t = s(mu_t), s(log_mu_t)
-        return -np.sum( mu_t ) + dot( y_t_testing, log_mu_t )
+    def LL_testing( slice_by_testing, mu__t, log_mu__t, y_testing__t ):
+        mu__t = slice_by_testing(mu__t)
+        log_mu__t = slice_by_testing(log_mu__t)
+        return -np.sum( mu__t ) + dot( y_testing__t, log_mu__t )
 
     @cached
     def LL_training_per_observation( LL_training, T_training ):
@@ -2271,7 +2285,7 @@ class Diagonal_Prior( Prior ):
     C_is_diagonal = True
 
     @cached
-    def C():
+    def C__dd():
         raise TypeError('cannot compute `C`: diagonal covariance matrix')
 
     @cached
@@ -2279,8 +2293,8 @@ class Diagonal_Prior( Prior ):
         raise TypeError('cannot compute `C_eig`: diagonal covariance matrix')
 
     @cached
-    def R():
-        raise TypeError('cannot compute `R`: diagonal covariance matrix')
+    def R__de():
+        raise TypeError('cannot compute `R__de`: diagonal covariance matrix')
 
 
 class ML( Diagonal_Prior ):
@@ -2297,11 +2311,11 @@ class ML( Diagonal_Prior ):
     """ Prior on `k` """
 
     @cached
-    def L( D ):
+    def l__d( D ):
         return np.ones( D ) * 1e12
 
     @cached
-    def dL_dtheta():
+    def dl_dtheta__id():
         return []
 
 
@@ -2330,7 +2344,7 @@ class Ridge( Diagonal_Prior ):
     """ Prior on `k` """
 
     @cached
-    def l( theta, D ):
+    def l__d( theta, D ):
         """ Diagonal of prior covariance matrix for `k`. """
         if np.iterable(theta):
             rho = theta[0]
@@ -2339,6 +2353,6 @@ class Ridge( Diagonal_Prior ):
         return exp( -rho ) * ones( D )
 
     @cached
-    def dl_dtheta( l ):
-        return [ -l ]
+    def dl_dtheta__id( l__d ):
+        return [ -l__d ]
 
