@@ -112,23 +112,26 @@ def test_simple_k_fitting_long():
 
 @attr('fast')
 def test_ridge_vs_ml_k():
-    d = SimulatedData( h_std=0, N_sec=30 )
+    d = SimulatedData( N_sec=30 )
     # fit ridge
-    r = Ridge( d, testing_proportion=0.2, 
-            initial_conditions={'theta_h':[-11, 4], 'theta_k':[5]} )
+    r = Ridge( d, testing_proportion=0.2, initial_conditions={'theta':[5]} )
     r.calc_posterior()
     # fit ml
-    m = ML( d, initial_conditions={'theta_h':[-11, 4], 'theta_k':[]} )
+    m = ML( d, initial_conditions={'theta':[]} )
     m.training_slices = r.training_slices
     m.testing_slices = r.testing_slices
     m.calc_posterior()
-    # calculate LLs
-    m.LL_training = m.posterior_k.LL_training__k
-    r.LL_training = r.posterior_k.LL_training__k
-    # log likelihoods should be better on ML version (since overfit)
-    assert m.LL_training > r.LL_training
-    #m.LL_testing = m._LL( m.posterior, data='testing' )
-    #r.LL_testing = r._LL( r.posterior, data='testing' )
+    # training LLs should be better on ML version (since overfit)
+    training_dLL = (
+            r.posterior.LL_training_per_observation - 
+            m.posterior.LL_training_per_observation )
+    assert training_dLL < 0
+    # testing LLs should be better on Ridge version
+    testing_dLL = (
+            r.posterior.LL_testing_per_observation - 
+            m.posterior.LL_testing_per_observation )
+    #assert testing_dLL > 0
+    print 'training/testing dLL :  %.1e / %.1e' % (training_dLL, testing_dLL)
     return m, r
 
 
@@ -139,24 +142,22 @@ Local evidence approximation
 """
 
 @attr('fast')
-def test_evidence_and_LE_match_for_k():
+def test_evidence_and_LE_match():
     """ When `theta`=`theta_h`, the approximation of evidence is exact. """
     # create demo data, with monotonically increasing `h`
-    d = SimulatedData( N_sec=5.12, h_mode='mi', h_std=1 )
+    d = SimulatedData( N_sec=5.12 )
     r = Ridge( d )
-    r.theta_k = [5]
-    r.theta_h = [-7, -10]
+    r.theta = [5]
     r.calc_posterior()
     # there should be no second dim reduction
     assert r.second_dr_k == 'none'
-    # local evidence: at same candidate theta_k, should get same solution
-    r.theta_k = r.posterior_k.theta_k
-    r.k_vec = r.posterior_k.k_vec
-    array_almost_equal( r.k, r.k_c )
-    array_almost_equal( r.mu__k, r.mu_c__k )
+    # local evidence: at same candidate theta, should get same solution
+    r.theta = r.posterior.theta
+    r.v = r.posterior.v
+    array_almost_equal( r.k__d, r.k_c__d )
+    array_almost_equal( r.mu__t, r.mu_c__t )
     array_almost_equal( 
-            r.posterior_k.evidence_components__k, 
-            r.local_evidence_components__k )
+            r.posterior.evidence_components, r.local_evidence_components )
 
 """
 ===========
@@ -168,79 +169,38 @@ Derivatives
 def test_LP_derivatives():
     """ Matching analytic and empirical derivatives of log posterior. """
     # create demo data, with monotonically increasing `h`
-    d = SimulatedData( N_sec=5.12, h_mode='mi', h_std=1 )
+    d = SimulatedData( N_sec=5.12 )
     r = Ridge( d )
-    r.theta_k = [5]
-    r.theta_h = [-7, -10]
+    r.theta = [5]
     r.calc_posterior()
     kw = { 'error_if_fail':True, 'error_threshold':0.01 }
     # check LP derivatives at random point
-    r.h_vec = normal( size=r._required_h_vec_length )
-    r.k_vec = normal( size=r._required_k_vec_length )
-    r._check_LP_derivatives__h( **kw )
-    r._check_LP_derivatives__k( **kw )
+    r.v = normal( size=r.required_v_length )
+    r.check_LP_derivatives( **kw )
 
 
 @attr('slow')
 def test_LE_derivatives():
     """ Matching analytic and empirical derivatives of log posterior. """
     # create demo data, with monotonically increasing `h`
-    d = SimulatedData( N_sec=5.12, h_mode='mi', h_std=1 )
+    d = SimulatedData( N_sec=5.12 )
     r = Ridge( d )
-    r.theta_k = [5]
-    r.theta_h = [-7, -10]
+    r.theta = [5]
     r.calc_posterior()
     kw = { 'error_if_fail':True, 'error_threshold':0.01 }
     # check LE derivatives at theta_h_n = theta_h
-    r._check_LE_derivatives__k( **kw )
-    r._check_LE_derivatives__h( **kw )
+    r.check_LE_derivatives( **kw )
     # check LE derivatives at another point
     r.theta_k = [1]
-    r.theta_h = [-3, -11]
-    r._check_LE_derivatives__k( **kw )
-    r._check_LE_derivatives__h( **kw )
+    r.check_LE_derivatives( **kw )
 
 @attr('fast')
-def test_ridge_k_derivatives():
+def test_ridge_derivatives():
     # create demo data, with monotonically increasing `h`
-    d = SimulatedData( N_sec=5.12, h_mode='mi', h_std=1 )
+    d = SimulatedData( N_sec=5.12 )
     r = Ridge( d )
-    r.theta_k = [5]
-    r.theta_h = [-7, -10]
-    r._check_Lk_derivatives( error_if_fail=True, error_threshold=0.01 )
-
-"""
-================
-Cross-validation
-================
-"""
-
-def test_cross_validation():
-    # create demo data, with monotonically increasing `h`
-    d = SimulatedData( N_sec=10.24, h_mode='mi', h_std=2 )
-    # fit ridge, learning `theta_k` and `theta_h`
-    r = Ridge( d, testing_proportion=0.2 )
-    r.solve()
-    # interpolated versions should be very similar in posterior_h
-    near = np.testing.assert_array_almost_equal
-    ph = r.posterior_h
-    for k in ['h', 'g', 'log_mu__h', 'mu__h', 'LL_testing__h', 
-            'LL_testing_per_observation__h']:
-        near( getattr(ph, k), getattr(ph, '_interp_'+k), 1 )
-    # interpolated versions should be very similar in posterior_k
-    pk = r.posterior_k
-    for k in ['log_mu__k', 'mu__k']:
-        x1 = getattr(pk, k)[100:-100]
-        x2 = getattr(pk, '_interp_'+k)[100:-100]
-        dx = norm( x1 - x2 ) / norm(x1)
-        assert dx < 1e-3
-    # when theta_h is faster, we should do better on training, but worse
-    # on prediction:
-    r.theta_h = r.theta_h + A([2, 0])
-    r.calc_posterior_h()
-    assert r.LL_training__h > ph.LL_training__h
-    #assert r.LL_testing__h < ph.LL_testing__h
-    return r
+    r.theta = [5]
+    r.check_l_derivatives( error_if_fail=True, error_threshold=0.01 )
 
 
 
