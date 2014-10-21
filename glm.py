@@ -406,7 +406,7 @@ Solver classes
 ===============
 """
 
-class Solver( AutoCR ):
+class Solver( AutoCacherAndReloader ):
 
     """ Superclass for GLM solvers.
 
@@ -605,7 +605,7 @@ class Solver( AutoCR ):
         # check current value is a valid size
         if hasattr( self, 'v' ):
             v = self.v
-            if len( v ) == self.required_v_length
+            if len( v ) == self.required_v_length:
                 return
             else:
                 delattr( self, v + '_vec' )
@@ -623,7 +623,7 @@ class Solver( AutoCR ):
 
     def reset_v( self ):
         """ Force reset of `v`. """
-        if hasattr( self, 'v' )
+        if hasattr( self, 'v' ):
             delattr( self, 'v' )
         self.initialise_v()
 
@@ -2155,7 +2155,7 @@ class Solver( AutoCR ):
             self._raise_bad_nonlinearity()
 
     @cached( cskip = ('nonlinearity', 'exp', 'mu_c__t') )
-    def log_mu_c__t( nonlinearity, z__t, mu__t ):
+    def log_mu_c__t( nonlinearity, z__t, mu_c__t ):
         """ Log of expected firing rate for `theta_c` approx posterior mode """
         if nonlinearity == 'exp':
             return z_c__t
@@ -2197,7 +2197,7 @@ class Solver( AutoCR ):
         ('C_is_diagonal', True, ['R_c_star__ef', 'dC_dtheta__idd']),
         ('C_is_diagonal', False, ['dl_dtheta__id']) ])
     def LE_jacobian( C_is_diagonal, second_dr_k, 
-            posterior, dC_dtheta__idd, dl_dtheta_id, R_c_star__ef, data, 
+            posterior, dC_dtheta__idd, dl_dtheta__id, R_c_star__ef, data, 
             mu_c__t, X_plus__tf, slice_by_training, C_c_plus__ff, E_n_plus__ff,
             Lambda_c_plus__ff, Cinv_c_plus__ff, k_c_plus__f, dims_c_star,
             l_c_plus__f, N_theta_k, Lambdainv_c_plus__ff ):
