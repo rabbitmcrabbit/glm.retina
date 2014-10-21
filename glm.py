@@ -299,13 +299,14 @@ class Data( AutoReloader ):
             announcer = Announcer( verbose=verbose )
         self._announcer = announcer
         # normalise, if required
+        X = X__td
         if normalise or whiten:
             self.announce('normalising', prefix='Data')
-            Xm = np.mean( X__td, axis=0 )
-            Xs = np.std( X__td, axis=0 )
+            Xm = np.mean( X, axis=0 )
+            Xs = np.std( X, axis=0 )
             if np.min( Xs ) > 0:
                 raise ValueError('`X` contains degenerate dimension')
-            X__td = ( X__td - Xm[na, :] ) / Xs[na, :]
+            X = ( X - Xm[na, :] ) / Xs[na, :]
             self.normalisation_filter = Bunch({ 'X_mean': Xm, 'X_std': Xs })
         # whiten, if required
         if whiten:
@@ -321,7 +322,7 @@ class Data( AutoReloader ):
         self.X_is_whitened = whiten
         self.X_has_constant = add_constant
         # save the data
-        self.X__td, self.y__t = X__td, y__t
+        self.X__td, self.y__t = X, y__t
         # sizes
         T, D = self.T, self.D = shape( self.X__td )
         if len( y__t ) != self.T:
@@ -358,7 +359,7 @@ class Data( AutoReloader ):
             plt.figure(**kw)
         ax = plt.gca()
         # bin
-        y = self.y
+        y = self.y__t
         if binsize_sec is None:
             i = np.arange( self.T )
         else:
@@ -521,7 +522,7 @@ class Solver( AutoCR ):
         else:
             return super( Solver, self )._clear_descendants( name )
 
-    """ Methods """
+    """ Announcements """
 
     def announce(self, *a, **kw):
         """ Verbose print. Sends call to the `self._announcer` object. """
@@ -532,13 +533,13 @@ class Solver( AutoCR ):
         return self.announce( 'computing %s' % name, prefix='cache' )
 
     """
-    =====================================
-    Common methods for initial conditions
-    =====================================
+    ===================
+    Initial conditions
+    ===================
     """
     
     def Prior_class( self ):
-        """ Returns the superclass that defines the `l` or `C` method. """
+        """ Returns the superclass that defines `l__d` or `C__dd`. """
         return [ c for c in self.__class__.mro() 
                 if c.__dict__.has_key('l') or c.__dict__.has_key('C') ][0]
 
@@ -557,9 +558,7 @@ class Solver( AutoCR ):
         c1 = ic.Prior_class
         c2 = self.Prior_class
         if c1 == c2:
-            p = ic.posterior
-            tv = ic.theta
-            return tv
+            return ic.posterior.theta
         else:
             err_str = 'subclass how to recast theta from %s to %s '
             err_str = err_str % ( c1.__name__, c2.__name__ )
@@ -615,11 +614,42 @@ class Solver( AutoCR ):
         p = self.posterior = self.create_posterior( theta=self.theta, v=self.v )
         p.is_point_estimate = True
 
+    @property
+    def grid_search_theta_available( self ):
+        return hasattr( self, 'grid_search_theta_parameters' )
+
+    def parse_initial_conditions( self, initial_conditions ):
+        """ Sets up the initial conditions for the model. """
+        # global defaults
+        self.initial_conditions = ics = Bunch()
+        ics['k'] = zeros( self.D )
+        ics['theta'] = self.default_theta0
+        # parse initial conditions: None
+        if initial_conditions == None:
+            pass
+        # parse initial_conditions: dict
+        elif isinstance( initial_conditions, dict ):
+            for k in ics.keys():
+                ics[k] = initial_conditions.get( k, ics[k] )
+        # parse initial_conditions: Solver object
+        else: 
+            # copy posterior
+            if hasattr( initial_conditions, 'posterior' ):
+                ics['k'] = initial_conditions.posterior.k
+            # recast values of `theta`
+            try:
+                ics['theta'] = self.recast_theta( initial_conditions )
+            except TypeError:
+                pass
+        # replace any invalid values
+        for i in range( self.N_theta ):
+            if (ics['theta'][i] is None) or (ics['theta'][i] == np.nan):
+                ics['theta'] = self.default_theta0[i]
 
     """
-    ===============================
-    Common methods for optimisation
-    ===============================
+    =========================
+    Methods for optimisation
+    =========================
     """
 
     def calc_posterior( self, xtol=None, ftol_per_obs=None, verbose=1 ):
@@ -897,9 +927,46 @@ class Solver( AutoCR ):
         self._announcer.thresh_allow( 
                 verbose, -np.inf, 'solve_theta', 'calc_posterior' )
 
-    def solve(self):
-        """ Solve for parameters and hyperparameters. Define in subclass. """
-        raise NotImplementedError()
+    ftol_per_obs = 1e-5
+
+
+    def solve( self, grid_search_theta=True, verbose=1, **kw ):
+        """ Solve for all hyperparameters and parameters. 
+
+        First solves for the hyperparameters `theta`. Then solves for
+        the posterior on `k` given the max marginal likelihood values of 
+        `theta`.
+
+        On the first iteration of the solver, a grid search is run on `theta`
+        if `grid_search_theta` is True. If this is done, it will override the
+        current value of `theta`. 
+        
+        Keywords:
+
+        Verbosity levels:
+
+        - 0 : print nothing
+        - 1 : print evidence steps only
+        - 2 : print evidence and posterior steps
+        - None : change nothing
+
+        """
+        # verbosity
+        self._announcer.thresh_allow( verbose, 1, 'solve', 'solve_theta' )
+        self._announcer.thresh_allow( verbose, 2, 'calc_posterior' )
+        # get initial posterior 
+        self.announce('Initial posterior')
+        self.calc_posterior( verbose=None )
+        # extract starting points for first cycle
+        self.reset_v()
+        # solve for theta
+        self.announce( 'solving for theta' )
+        self.solve_theta( verbose=None, grid_search=grid_search_theta, **kw )
+        # ensure no more grid searches are run
+        grid_search_theta = False
+        # restore verbosity
+        self._announcer.allow( 
+                'solve', 'solve_theta', 'calc_posterior' )
 
     """ Data munging """
 
@@ -1040,7 +1107,7 @@ class Solver( AutoCR ):
             count += s_len
         return new_sig
 
-    def slice_by__testing( self, sig ):
+    def slice_by_testing( self, sig ):
         """ Retrieves the testing slices of a signal. """
         if not self.has_testing_regions:
             return A([])
@@ -1062,6 +1129,24 @@ class Solver( AutoCR ):
         for s in self.testing_slices:
             sig[ s, ... ] = 0
         return sig
+
+    @cached
+    def y_testing__t( data, slice_by_testing ):
+        return slice_by_testing( data.y__t )
+
+    @cached
+    def LL_testing( slice_by_testing, mu__t, log_mu__t, y_testing__t ):
+        mu__t = slice_by_testing(mu__t)
+        log_mu__t = slice_by_testing(log_mu__t)
+        return -np.sum( mu__t ) + dot( y_testing__t, log_mu__t )
+
+    @cached
+    def LL_training_per_observation( LL_training, T_training ):
+        return LL_training / T_training
+
+    @cached
+    def LL_testing_per_observation( LL_testing, T_testing ):
+        return LL_testing / T_testing
 
     """
     ===================
@@ -1218,6 +1303,148 @@ class Solver( AutoCR ):
         if debug:
             tracer()
 
+    def check_l_derivatives( self, eps=1e-6, debug=False,
+            error_if_fail=False, error_threshold=0.05, hessian=False ):
+        """ Check derivatives of diagonal of prior covariance wrt `theta`. 
+        
+        For both the Jacobian and Hessian, evaluates the analytic derivatives
+        provided by the respective attributes `dl_dtheta__id` and 
+        `d2l_dtheta2__iid`, and compares with empirical values, obtained from 
+        finite differences method on `l__d` and `dl_dtheta__id` respectively.
+        
+        Typically, this prints out the size of the error between analytic
+        and empirical estimates, as a norm. For example, for the Jacobian 
+        (analytic `aJ` and empirical `eJ` respectively), this computes 
+        norm(aJ - eJ) / norm(aJ). If required, a ValueError can be thrown
+        if the deviation is too large.
+
+        This tests the derivatives at the current value of `theta`.
+
+        Keywords:
+
+        - `eps` : absolute size of step in finite difference method
+
+        - `debug` : drop into IPython debugger after evaluation
+
+        - `error_if_fail` : raise ValueError if the relative deviation
+            is too large
+
+        - `error_threshold` : if `error_if_fail`, only raise ValueError
+            if the relative deviation is greater than this value.
+
+        - `hessian` : boolean. whether to check hessian
+
+        NOTE: Hessian testing not currently implemented.
+
+        """
+        # can only run this if C is diagonal
+        if not self.C_is_diagonal:
+            raise TypeError('`C` is not diagonal: check `l` derivs instead.')
+        # initial condition
+        theta0 = self.theta
+        N_theta = self.N_theta
+        D = self.D
+        # calculate l
+        l = self.l__d
+        # JACOBIAN
+        # analytic Jacobian
+        dl = A( self.dl_dtheta__id )
+        # helper function
+        def dth(i):
+            z = zeros( N_theta )
+            z[i] = eps
+            return z
+        # empirical Jacobian
+        edl = np.zeros( (N_theta, D) )
+        for i in range(N_theta):
+            self.theta = theta0 + dth(i)
+            edl[i] = ( self.l__d - l ) / eps
+        # print error
+        err1 = norm( dl - edl ) / norm( dl )
+        print ' '
+        print 'dl norm deviation: %.6f' % err1
+        print ' '
+        # raise error?
+        if error_if_fail and (err1 > error_threshold):
+            raise ValueError('Jacobian of l failed at %.6f' % err1 )
+        # HESSIAN
+        if hessian:
+            raise NotImplementedError()
+        # debug
+        if debug:
+            tracer()
+
+    def check_C_derivatives( self, eps=1e-6, debug=False,
+            error_if_fail=False, error_threshold=0.05, hessian=False ):
+        """ Check derivatives of the prior covariance matrix wrt `theta`. 
+        
+        For both the Jacobian and Hessian, evaluates the analytic derivatives
+        provided by the respective methods `dC_dtheta__idd` and 
+        `d2C_dtheta2__iidd`, and compares with empirical values, obtained from 
+        finite differences method on `C__dd` and `dC_dtheta__iidd` respectively.
+        
+        Typically, this prints out the size of the error between analytic
+        and empirical estimates, as a norm. For example, for the Jacobian 
+        (analytic `aJ` and empirical `eJ` respectively), this computes 
+        norm(aJ - eJ) / norm(aJ). If required, a ValueError can be thrown
+        if the deviation is too large.
+
+        This tests the derivatives at the current value of `theta`.
+
+        Keywords:
+
+        - `eps` : absolute size of step in finite difference method
+
+        - `debug` : drop into IPython debugger after evaluation
+
+        - `error_if_fail` : raise ValueError if the relative deviation
+            is too large
+
+        - `error_threshold` : if `error_if_fail`, only raise ValueError
+            if the relative deviation is greater than this value.
+
+        - `hessian` : whether to test the same for the hessian
+
+        NOTE: Hessian testing not currently implemented.
+        
+        """
+        # can only run this if C is not diagonal
+        if self.C_is_diagonal:
+            raise TypeError('`C` is diagonal: check `L` derivatives instead')
+        # initial condition
+        theta0 = self.theta
+        N_theta = self.N_theta
+        D = self.D
+        # calculate C
+        C = self.C__dd
+        # JACOBIAN
+        # analytic Jacobian
+        dC = A( self.dC_dtheta__idd )
+        # helper function
+        def dth(i):
+            z = zeros( N_theta )
+            z[i] = eps
+            return z
+        # empirical Jacobian
+        edC = np.zeros( (N_theta, D, D) )
+        for i in range(N_theta):
+            self.theta = theta0 + dth(i)
+            edC[i] = ( self.C__idd - C ) / eps
+        # print error
+        err1 = norm( dC - edC ) / norm( dC )
+        print ' '
+        print 'dC norm deviation: %.6f' % err1
+        print ' '
+        # raise error?
+        if error_if_fail and (err1 > error_threshold):
+            raise ValueError('Jacobian of C failed at %.6f' % err1 )
+        # HESSIAN
+        if hessian:
+            raise NotImplementedError()
+        # debug
+        if debug:
+            tracer()
+
     """ Saving """
 
     def __getstate__( self ):
@@ -1260,44 +1487,6 @@ class Solver( AutoCR ):
     @property
     def N_observations( self ):
         return self.T_training
-
-    """
-    ==================
-    Initial conditions
-    ==================
-    """
-
-    @property
-    def grid_search_theta_available( self ):
-        return hasattr( self, 'grid_search_theta_parameters' )
-
-    def parse_initial_conditions( self, initial_conditions ):
-        """ Sets up the initial conditions for the model. """
-        # global defaults
-        self.initial_conditions = ics = Bunch()
-        ics['k'] = zeros( self.D )
-        ics['theta'] = self.default_theta0
-        # parse initial conditions: None
-        if initial_conditions == None:
-            pass
-        # parse initial_conditions: dict
-        elif isinstance( initial_conditions, dict ):
-            for k in ics.keys():
-                ics[k] = initial_conditions.get( k, ics[k] )
-        # parse initial_conditions: Solver object
-        else: 
-            # copy posterior
-            if hasattr( initial_conditions, 'posterior' ):
-                ics['k'] = initial_conditions.posterior.k
-            # recast values of `theta`
-            try:
-                ics['theta'] = self.recast_theta( initial_conditions )
-            except TypeError:
-                pass
-        # replace any invalid values
-        for i in range( self.N_theta ):
-            if (ics['theta'][i] is None) or (ics['theta'][i] == np.nan):
-                ics['theta'] = self.default_theta0[i]
 
     
     """
@@ -1683,6 +1872,12 @@ class Solver( AutoCR ):
         return dot( X_star__te.T, mu__t[:, na] * X_star__te )
 
     """
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    Solving for `theta`
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    """
+
+    """
     ===============
     Local evidence
     ===============
@@ -2053,214 +2248,6 @@ class Solver( AutoCR ):
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
     """
 
-    ftol_per_obs = 1e-5
-
-
-    def solve( self, grid_search_theta=True, verbose=1, **kw ):
-        """ Solve for all hyperparameters and parameters. 
-
-        First solves for the hyperparameters `theta`. Then solves for
-        the posterior on `k` given the max marginal likelihood values of 
-        `theta`.
-
-        On the first iteration of the solver, a grid search is run on `theta`
-        if `grid_search_theta` is True. If this is done, it will override the
-        current value of `theta`. 
-        
-        Keywords:
-
-        Verbosity levels:
-
-        - 0 : print nothing
-        - 1 : print evidence steps only
-        - 2 : print evidence and posterior steps
-        - None : change nothing
-
-        """
-        # verbosity
-        self._announcer.thresh_allow( verbose, 1, 'solve', 'solve_theta' )
-        self._announcer.thresh_allow( verbose, 2, 'calc_posterior' )
-        # get initial posterior 
-        self.announce('Initial posterior')
-        self.calc_posterior( verbose=None )
-        # extract starting points for first cycle
-        self.reset_v()
-        # solve for theta
-        self.announce( 'solving for theta' )
-        self.solve_theta( verbose=None, grid_search=grid_search_theta, **kw )
-        # ensure no more grid searches are run
-        grid_search_theta = False
-        # restore verbosity
-        self._announcer.allow( 
-                'solve', 'solve_theta', 'calc_posterior' )
-
-    """ Derivative checking """
-
-    def check_l_derivatives( self, eps=1e-6, debug=False,
-            error_if_fail=False, error_threshold=0.05, hessian=False ):
-        """ Check derivatives of diagonal of prior covariance wrt `theta`. 
-        
-        For both the Jacobian and Hessian, evaluates the analytic derivatives
-        provided by the respective attributes `dl_dtheta__id` and 
-        `d2l_dtheta2__iid`, and compares with empirical values, obtained from 
-        finite differences method on `l__d` and `dl_dtheta__id` respectively.
-        
-        Typically, this prints out the size of the error between analytic
-        and empirical estimates, as a norm. For example, for the Jacobian 
-        (analytic `aJ` and empirical `eJ` respectively), this computes 
-        norm(aJ - eJ) / norm(aJ). If required, a ValueError can be thrown
-        if the deviation is too large.
-
-        This tests the derivatives at the current value of `theta`.
-
-        Keywords:
-
-        - `eps` : absolute size of step in finite difference method
-
-        - `debug` : drop into IPython debugger after evaluation
-
-        - `error_if_fail` : raise ValueError if the relative deviation
-            is too large
-
-        - `error_threshold` : if `error_if_fail`, only raise ValueError
-            if the relative deviation is greater than this value.
-
-        - `hessian` : boolean. whether to check hessian
-
-        NOTE: Hessian testing not currently implemented.
-
-        """
-        # can only run this if C is diagonal
-        if not self.C_is_diagonal:
-            raise TypeError('`C` is not diagonal: check `l` derivs instead.')
-        # initial condition
-        theta0 = self.theta
-        N_theta = self.N_theta
-        D = self.D
-        # calculate l
-        l = self.l__d
-        # JACOBIAN
-        # analytic Jacobian
-        dl = A( self.dl_dtheta__id )
-        # helper function
-        def dth(i):
-            z = zeros( N_theta )
-            z[i] = eps
-            return z
-        # empirical Jacobian
-        edl = np.zeros( (N_theta, D) )
-        for i in range(N_theta):
-            self.theta = theta0 + dth(i)
-            edl[i] = ( self.l__d - l ) / eps
-        # print error
-        err1 = norm( dl - edl ) / norm( dl )
-        print ' '
-        print 'dl norm deviation: %.6f' % err1
-        print ' '
-        # raise error?
-        if error_if_fail and (err1 > error_threshold):
-            raise ValueError('Jacobian of l failed at %.6f' % err1 )
-        # HESSIAN
-        if hessian:
-            raise NotImplementedError()
-        # debug
-        if debug:
-            tracer()
-
-    def check_C_derivatives( self, eps=1e-6, debug=False,
-            error_if_fail=False, error_threshold=0.05, hessian=False ):
-        """ Check derivatives of the prior covariance matrix wrt `theta`. 
-        
-        For both the Jacobian and Hessian, evaluates the analytic derivatives
-        provided by the respective methods `dC_dtheta__idd` and 
-        `d2C_dtheta2__iidd`, and compares with empirical values, obtained from 
-        finite differences method on `C__dd` and `dC_dtheta__iidd` respectively.
-        
-        Typically, this prints out the size of the error between analytic
-        and empirical estimates, as a norm. For example, for the Jacobian 
-        (analytic `aJ` and empirical `eJ` respectively), this computes 
-        norm(aJ - eJ) / norm(aJ). If required, a ValueError can be thrown
-        if the deviation is too large.
-
-        This tests the derivatives at the current value of `theta`.
-
-        Keywords:
-
-        - `eps` : absolute size of step in finite difference method
-
-        - `debug` : drop into IPython debugger after evaluation
-
-        - `error_if_fail` : raise ValueError if the relative deviation
-            is too large
-
-        - `error_threshold` : if `error_if_fail`, only raise ValueError
-            if the relative deviation is greater than this value.
-
-        - `hessian` : whether to test the same for the hessian
-
-        NOTE: Hessian testing not currently implemented.
-        
-        """
-        # can only run this if C is not diagonal
-        if self.C_is_diagonal:
-            raise TypeError('`C` is diagonal: check `L` derivatives instead')
-        # initial condition
-        theta0 = self.theta
-        N_theta = self.N_theta
-        D = self.D
-        # calculate C
-        C = self.C__dd
-        # JACOBIAN
-        # analytic Jacobian
-        dC = A( self.dC_dtheta__idd )
-        # helper function
-        def dth(i):
-            z = zeros( N_theta )
-            z[i] = eps
-            return z
-        # empirical Jacobian
-        edC = np.zeros( (N_theta, D, D) )
-        for i in range(N_theta):
-            self.theta = theta0 + dth(i)
-            edC[i] = ( self.C__idd - C ) / eps
-        # print error
-        err1 = norm( dC - edC ) / norm( dC )
-        print ' '
-        print 'dC norm deviation: %.6f' % err1
-        print ' '
-        # raise error?
-        if error_if_fail and (err1 > error_threshold):
-            raise ValueError('Jacobian of C failed at %.6f' % err1 )
-        # HESSIAN
-        if hessian:
-            raise NotImplementedError()
-        # debug
-        if debug:
-            tracer()
-
-    """
-    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-    Cross-validation
-    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-    """
-
-    @cached
-    def y_testing__t( data, slice_by_testing ):
-        return slice_by_testing( data.y__t )
-
-    @cached
-    def LL_testing( slice_by_testing, mu__t, log_mu__t, y_testing__t ):
-        mu__t = slice_by_testing(mu__t)
-        log_mu__t = slice_by_testing(log_mu__t)
-        return -np.sum( mu__t ) + dot( y_testing__t, log_mu__t )
-
-    @cached
-    def LL_training_per_observation( LL_training, T_training ):
-        return LL_training / T_training
-
-    @cached
-    def LL_testing_per_observation( LL_testing, T_testing ):
-        return LL_testing / T_testing
 
 
 
