@@ -300,11 +300,12 @@ class Data( AutoReloader ):
         self._announcer = announcer
         # normalise, if required
         X = X__td
+        T, D = self.T, self.D = shape( X )
         if normalise or whiten:
             self.announce('normalising', prefix='Data')
             Xm = np.mean( X, axis=0 )
             Xs = np.std( X, axis=0 )
-            if np.min( Xs ) > 0:
+            if np.min( Xs ) == 0:
                 raise ValueError('`X` contains degenerate dimension')
             X = ( X - Xm[na, :] ) / Xs[na, :]
             self.normalisation_filter = Bunch({ 'X_mean': Xm, 'X_std': Xs })
@@ -330,6 +331,14 @@ class Data( AutoReloader ):
 
     def announce( self, *a, **kw ):
         return self._announcer.announce( *a, **kw )
+
+    @property
+    def X( self ):
+        return self.X__td
+
+    @property
+    def y( self ):
+        return self.y__t
 
     """ Plotting """
 
@@ -649,7 +658,7 @@ class Solver( AutoCacherAndReloader ):
         """ Sets up the initial conditions for the model. """
         # global defaults
         self.initial_conditions = ics = Bunch()
-        ics['k'] = zeros( self.D )
+        ics['k__d'] = zeros( self.D )
         ics['theta'] = self.default_theta0
         # parse initial conditions: None
         if initial_conditions == None:
@@ -662,7 +671,7 @@ class Solver( AutoCacherAndReloader ):
         else: 
             # copy posterior
             if hasattr( initial_conditions, 'posterior' ):
-                ics['k'] = initial_conditions.posterior.k
+                ics['k__d'] = initial_conditions.posterior.k__d
             # recast values of `theta`
             try:
                 ics['theta'] = self.recast_theta( initial_conditions )
@@ -938,7 +947,7 @@ class Solver( AutoCacherAndReloader ):
         except ConvergedUpToFtol:
             theta = self.theta
         # save
-        g(theta_v)
+        g(theta)
 
     def solve_theta( self, grid_search=False, ftol_per_obs=None, 
             max_iterations=10, verbose=1, **kw ):
@@ -950,13 +959,11 @@ class Solver( AutoCacherAndReloader ):
         if not provided.
         
         """
-        # how many hyperparameters are we optimising over
-        N_theta = self.N_theta
         # parse tolerance
         if ftol_per_obs is None:
             ftol_per_obs = self.ftol_per_obs
-        # do we actually have a theta_v to solve
-        if N_theta_v == 0:
+        # do we actually have a theta to solve
+        if self.N_theta == 0:
             return
         # parse verbosity
         self._announcer.thresh_allow( verbose, 1, 'solve_theta' )
@@ -1005,8 +1012,8 @@ class Solver( AutoCacherAndReloader ):
                 announce_str = announce_str % (gs.current_count, gs.max_count)
                 announce_str += ('%d,' * len(theta))
                 announce_str = announce_str[:-1] + ')'
-                announce_str = announce_str % tuple(tv)
-                max_len = 30 + 2*len(tv)
+                announce_str = announce_str % tuple(theta)
+                max_len = 30 + 2*len(theta)
                 if len(announce_str) < max_len:
                     announce_str += ' '*(max_len - len(announce_str))
                 announce_str += ('= %.1f' % this_evidence)
@@ -1382,12 +1389,12 @@ class Solver( AutoCacherAndReloader ):
         LE = self.LE_objective
         a = dLE = self.LE_jacobian
         # evaluate empirical
-        theta_v0 = np.array( self.theta ).astype(float)
+        theta0 = np.array( self.theta ).astype(float)
         e = edLE = np.zeros( N_theta )
         for i in range( N_theta ):
-            theta_v = theta_v0.copy()
-            theta_v[i] += eps
-            self.theta_v = theta_v
+            theta = theta0.copy()
+            theta[i] += eps
+            self.theta = theta
             edLE[i] = ( self.LE_objective - LE) / eps
         # check Jacobian
         a[ np.abs(a) < 1e-20 ] = 1e-20
@@ -2084,7 +2091,7 @@ class Solver( AutoCacherAndReloader ):
     @cached( cskip = [
         ('second_dr_k', 'none', 'R_c_star__ef'),
         ('second_dr_k', 'project', 'R_c_star__ef') ])
-    def X_plus( second_dr_k, posterior, dims_c_star, R_c_star__ef ):
+    def X_plus__tf( second_dr_k, posterior, dims_c_star, R_c_star__ef ):
         """ Regressor matrix in +-space. """
         # retrieve
         X_star__te = posterior.X_star__te
@@ -2140,9 +2147,9 @@ class Solver( AutoCacherAndReloader ):
             return dot( posterior.R__de, k_c_star__e )
 
     @cached
-    def z_c__t( X_plus, k_c_plus__f ):
+    def z_c__t( X_plus__tf, k_c_plus__f ):
         """ Argument to nonlinearity for `theta_c` approx posterior mode. """
-        return dot( X_plus, k_c_plus__f )
+        return dot( X_plus__tf, k_c_plus__f )
 
     @cached
     def mu_c__t( z_c__t, nonlinearity ):
@@ -2155,7 +2162,7 @@ class Solver( AutoCacherAndReloader ):
             self._raise_bad_nonlinearity()
 
     @cached( cskip = ('nonlinearity', 'exp', 'mu_c__t') )
-    def log_mu_c__t( nonlinearity, z__t, mu_c__t ):
+    def log_mu_c__t( nonlinearity, z_c__t, mu_c__t ):
         """ Log of expected firing rate for `theta_c` approx posterior mode """
         if nonlinearity == 'exp':
             return z_c__t
@@ -2200,7 +2207,7 @@ class Solver( AutoCacherAndReloader ):
             posterior, dC_dtheta__idd, dl_dtheta__id, R_c_star__ef, data, 
             mu_c__t, X_plus__tf, slice_by_training, C_c_plus__ff, E_n_plus__ff,
             Lambda_c_plus__ff, Cinv_c_plus__ff, k_c_plus__f, dims_c_star,
-            l_c_plus__f, N_theta_k, Lambdainv_c_plus__ff ):
+            l_c_plus__f, N_theta, Lambdainv_c_plus__ff ):
         """ Jacobian of local evidence objective. """
         # diagonal case
         if C_is_diagonal:
@@ -2228,9 +2235,9 @@ class Solver( AutoCacherAndReloader ):
                     k_c_plus__f.T, 
                     E_n_plus__ff - diag( 1./l_c_plus__f ) )
             # calculate for each variable in theta
-            dpsi__i = np.empty( N_theta_k )
+            dpsi__i = np.empty( N_theta )
             # derivatives wrt `theta_h` variables
-            for j in range( N_theta_k ):
+            for j in range( N_theta ):
                 dl__f = dl_dtheta_plus__if[ j ]
                 B__ff = Lam_Cinv__ff * ( dl__f / l_c_plus__f )[na, :]
                 Bk__f = ldiv( 
@@ -2267,9 +2274,9 @@ class Solver( AutoCacherAndReloader ):
             kT_En_minus_Cinv__f = dot( 
                     k_c_plus__f.T, E_n_plus__ff - Cinv_c_plus__ff )
             # calculate for each variable in theta
-            dpsi__i = np.empty( N_theta_k )
+            dpsi__i = np.empty( N_theta )
             # derivatives wrt `theta_h` variables
-            for j in range( N_theta_k ):
+            for j in range( N_theta ):
                 dC__ff = dC_dtheta_plus__ff[ j ]
                 B__ff = mdot( Lam_Cinv__ff, dC, Cinv_c_plus__ff )
                 Bk__f = ldiv( 
@@ -2295,7 +2302,7 @@ Basic priors on `k`
 ====================
 """
 
-class Prior( AutoReloader ):
+class Prior( Solver ):
 
     """ Superclass for priors on `k`. """
     
@@ -2327,7 +2334,7 @@ class ML( Diagonal_Prior ):
 
     # default variables
     hyperparameter_names = []
-    bounds = []
+    bounds_theta = []
     default_theta0 = []
 
     R_is_identity = True
@@ -2355,7 +2362,7 @@ class Ridge( Diagonal_Prior ):
 
     # default variables
     hyperparameter_names = [ 'rho' ]
-    bounds = [ (-15, 15) ]
+    bounds_theta = [ (-15, 15) ]
     default_theta0 = [0.]
         
     grid_search_theta_parameters = { 
