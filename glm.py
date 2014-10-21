@@ -415,6 +415,22 @@ class Solver( AutoCR ):
     
     """
 
+    """ 
+    ----------
+    Constants 
+    ----------
+    """
+
+    # for dimensionality reduction: where to truncate the spectrum
+    cutoff_lambda = 1e-12
+    ftol_per_obs = 1e-5
+
+    """ 
+    ---------------
+    Initialisation
+    ---------------
+    """
+
     def __init__( self, data, initial_conditions=None, 
             testing_proportion=0, testing_block_size_smp=10,
             solve=False, announcer=None, verbose=True, verbose_cache=False, 
@@ -470,57 +486,26 @@ class Solver( AutoCR ):
         if solve:
             self.solve()
 
-    """ Posterior objects """
-
-    # by default, this is not a posterior, unless specified otherwise
-    is_posterior = False
-
-    def create_posterior( self, **kw ):
-        """ Create a posterior object of the same class as self. 
-
-        This will place a copy of the current cache in the posterior, and
-        set the flag `is_posterior` to be `True`. Any keywords provided will
-        also be set as attributes; this will happen *first* so that it
-        does not wipe the cache.
-        
-        The posterior object will contain weak references to the parent.
-        
-        """
-        # create weak references
-        data = weakref.proxy( self.data )
-        announcer = weakref.proxy( self._announcer )
-        parent = weakref.proxy( self )
-        # create object
-        p = self.__class__( data=None, empty_copy=True, announcer=announcer )
-        # label it as a posterior object
-        p.is_posterior = True
-        p.parent = parent
-        # note the training
-        p.training_slices = self.training_slices
-        p.testing_slices = self.testing_slices
-        # copy the nonlinearity
-        p.nonlinearity = self.nonlinearity 
-        # set any remaining attributes
-        for k, v in kw.items():
-            setattr(p, k, v)
-        # copy the current cache
-        return p
+    """ Useful properties """
 
     @property
-    def data( self ):
-        if hasattr( self, '_data' ):
-            return self._data
-        else:
-            return self.parent.data
+    def N_theta( self ):
+        """ Number of hyperparameters. """
+        return len( self.hyperparameter_names )
 
-    def _clear_descendants( self, name ):
-        """ Posteriors should be immutable. """
-        if self.is_posterior:
-            for d in self._descendants.get( name, () ):
-                if self._cache.has_key( d ):
-                    raise TypeError('cannot change the cache of a posterior')
-        else:
-            return super( Solver, self )._clear_descendants( name )
+    @property
+    def N_observations( self ):
+        return self.T_training
+
+    @cached
+    def T( data ):
+        """ Number of time bins. """
+        return data.T
+
+    @cached
+    def D( data ):
+        """ Dimensionality of the stimulus. """
+        return data.D
 
     """ Announcements """
 
@@ -532,6 +517,47 @@ class Solver( AutoCR ):
         """ Callback method when a cached variable is computed. """
         return self.announce( 'computing %s' % name, prefix='cache' )
 
+    """ Saving """
+
+    def __getstate__( self ):
+        """ For pickling, remove `data` and some baggage. """
+        d = super( Solver, self ).__getstate__()
+        # re-add the settable cache attributes
+        for k in self._cache.keys():
+            if getattr( self.__class__, k ).settable:
+                d['_cache'][k] = self._cache[k]
+        # get rid of undesirables
+        if self.is_posterior:
+            d['parent'] = None
+        keys_to_del = ['_data']
+        for k in keys_to_del:
+            if d.has_key(k):
+                del d[k]
+        return d
+
+    def __setstate__( self, d ):
+        # create weak references
+        for k in [k for k in d.keys() if k.startswith('posterior_')]:
+            d[k].parent = weakref.proxy( self )
+        if d.has_key('_reducer'):
+            d['_reducer'].parent = weakref.proxy( self )
+        # save
+        self.__dict__ = d
+
+    """ Plotting """
+
+    def plot_y( self, posterior=None, **kw ):
+        """ Plot spike counts. See `Data.plot_y` for docstring. 
+        
+        By default, this plots `self.posterior`, unless an alternative
+        posterior is provided.
+        
+        """
+        if posterior is None:
+            posterior = self.posterior
+
+        return self.data.plot_y( posterior, **kw )
+
     """
     ===================
     Initial conditions
@@ -541,10 +567,11 @@ class Solver( AutoCR ):
     def Prior_class( self ):
         """ Returns the superclass that defines `l__d` or `C__dd`. """
         return [ c for c in self.__class__.mro() 
-                if c.__dict__.has_key('l') or c.__dict__.has_key('C') ][0]
+                if c.__dict__.has_key('l__d') 
+                or c.__dict__.has_key('C__dd') ][ 0 ]
 
     def recast_theta( self, ic ):
-        """ Process results of previous solver to determine initial theta.
+        """ Process results of previous solver to determine initial `theta`.
 
         Arguments:
         - `ic` : previously solved version of model
@@ -652,6 +679,129 @@ class Solver( AutoCR ):
     =========================
     """
 
+    def solve( self, grid_search_theta=True, verbose=1, **kw ):
+        """ Solve for all hyperparameters and parameters. 
+
+        First solves for the hyperparameters `theta`. Then solves for
+        the posterior on `k` given the max marginal likelihood values of 
+        `theta`.
+
+        On the first iteration of the solver, a grid search is run on `theta`
+        if `grid_search_theta` is True. If this is done, it will override the
+        current value of `theta`. 
+        
+        Keywords:
+
+        Verbosity levels:
+
+        - 0 : print nothing
+        - 1 : print evidence steps only
+        - 2 : print evidence and posterior steps
+        - None : change nothing
+
+        """
+        # verbosity
+        self._announcer.thresh_allow( verbose, 1, 'solve', 'solve_theta' )
+        self._announcer.thresh_allow( verbose, 2, 'calc_posterior' )
+        # get initial posterior 
+        self.announce('Initial posterior')
+        self.calc_posterior( verbose=None )
+        # extract starting points for first cycle
+        self.reset_v()
+        # solve for theta
+        self.announce( 'solving for theta' )
+        self.solve_theta( verbose=None, grid_search=grid_search_theta, **kw )
+        # ensure no more grid searches are run
+        grid_search_theta = False
+        # restore verbosity
+        self._announcer.allow( 
+                'solve', 'solve_theta', 'calc_posterior' )
+
+    """ 
+    ------------------
+    Posterior objects 
+    ------------------
+
+    Optimisation involves calculating the posterior distribution on `k` given 
+    the data and the hyperparameters:
+
+        P( k | data, theta )
+
+    This is approximated by solving for the posterior mode (stored in
+    `v` / `k_star` / `k`), and by taking a Laplace estimate (stored in
+    `Lambda` and its variants).
+
+    When these is calculated, they are saved in `self.posterior`. This 
+    attribute is an object of the same class as `self`, but have a flag
+    `is_posterior` set to True. Also the cache is immutable, to prevent
+    accidental changes.
+
+    There is also the question of how to choose `theta`. This is determined
+    by calculating the marginal likelihood (i.e. the evidence) of the
+    data given `theta`, and then optimised for `theta` via coarse grid 
+    search and gradient ascent.
+
+    For each value of `theta`, a posterior is calculated and temporarily
+    stored as `self.posterior`. 
+
+    """
+
+    # by default, `self` is not a posterior, unless specified otherwise
+    is_posterior = False
+
+    def create_posterior( self, **kw ):
+        """ Create a posterior object of the same class as self. 
+
+        This will place a copy of the current cache in the posterior, and
+        set the flag `is_posterior` to be `True`. Any keywords provided will
+        also be set as attributes; this will happen *first* so that it
+        does not wipe the cache.
+        
+        The posterior object will contain weak references to the parent.
+        
+        """
+        # create weak references
+        data = weakref.proxy( self.data )
+        announcer = weakref.proxy( self._announcer )
+        parent = weakref.proxy( self )
+        # create object
+        p = self.__class__( data=None, empty_copy=True, announcer=announcer )
+        # label it as a posterior object
+        p.is_posterior = True
+        p.parent = parent
+        # note the training
+        p.training_slices = self.training_slices
+        p.testing_slices = self.testing_slices
+        # copy the nonlinearity
+        p.nonlinearity = self.nonlinearity 
+        # set any remaining attributes
+        for k, v in kw.items():
+            setattr(p, k, v)
+        # copy the current cache
+        return p
+
+    @property
+    def data( self ):
+        if hasattr( self, '_data' ):
+            return self._data
+        else:
+            return self.parent.data
+
+    def _clear_descendants( self, name ):
+        """ Posteriors should be immutable. """
+        if self.is_posterior:
+            for d in self._descendants.get( name, () ):
+                if self._cache.has_key( d ):
+                    raise TypeError('cannot change the cache of a posterior')
+        else:
+            return super( Solver, self )._clear_descendants( name )
+
+    """
+    ---------------
+    Solving for `k`
+    ---------------
+    """
+    
     def calc_posterior( self, xtol=None, ftol_per_obs=None, verbose=1 ):
         """ Calculate posterior on `v`, via gradient descent. 
 
@@ -731,6 +881,12 @@ class Solver( AutoCR ):
         # again, ensure that this posterior is set to the posterior mode
         p.csetattr( 'v', v_hat )
 
+    """
+    -------------------
+    Solving for `theta`
+    -------------------
+    """
+    
     def get_next_theta_n( self, factr=1e10, ftol_per_obs=None ):
         """ Single step for local evidence approx algorithm.
 
@@ -927,58 +1083,6 @@ class Solver( AutoCR ):
         self._announcer.thresh_allow( 
                 verbose, -np.inf, 'solve_theta', 'calc_posterior' )
 
-    ftol_per_obs = 1e-5
-
-
-    def solve( self, grid_search_theta=True, verbose=1, **kw ):
-        """ Solve for all hyperparameters and parameters. 
-
-        First solves for the hyperparameters `theta`. Then solves for
-        the posterior on `k` given the max marginal likelihood values of 
-        `theta`.
-
-        On the first iteration of the solver, a grid search is run on `theta`
-        if `grid_search_theta` is True. If this is done, it will override the
-        current value of `theta`. 
-        
-        Keywords:
-
-        Verbosity levels:
-
-        - 0 : print nothing
-        - 1 : print evidence steps only
-        - 2 : print evidence and posterior steps
-        - None : change nothing
-
-        """
-        # verbosity
-        self._announcer.thresh_allow( verbose, 1, 'solve', 'solve_theta' )
-        self._announcer.thresh_allow( verbose, 2, 'calc_posterior' )
-        # get initial posterior 
-        self.announce('Initial posterior')
-        self.calc_posterior( verbose=None )
-        # extract starting points for first cycle
-        self.reset_v()
-        # solve for theta
-        self.announce( 'solving for theta' )
-        self.solve_theta( verbose=None, grid_search=grid_search_theta, **kw )
-        # ensure no more grid searches are run
-        grid_search_theta = False
-        # restore verbosity
-        self._announcer.allow( 
-                'solve', 'solve_theta', 'calc_posterior' )
-
-    """ Data munging """
-
-    @cached
-    def T( data ):
-        """ Number of time bins. """
-        return data.T
-
-    @cached
-    def D( data ):
-        """ Dimensionality of the stimulus. """
-        return data.D
 
     """
     ================
@@ -1445,69 +1549,7 @@ class Solver( AutoCR ):
         if debug:
             tracer()
 
-    """ Saving """
-
-    def __getstate__( self ):
-        """ For pickling, remove `data` and some baggage. """
-        d = super( Solver, self ).__getstate__()
-        # re-add the settable cache attributes
-        for k in self._cache.keys():
-            if getattr( self.__class__, k ).settable:
-                d['_cache'][k] = self._cache[k]
-        # get rid of undesirables
-        if self.is_posterior:
-            d['parent'] = None
-        keys_to_del = ['_data']
-        for k in keys_to_del:
-            if d.has_key(k):
-                del d[k]
-        return d
-
-    def __setstate__( self, d ):
-        # create weak references
-        for k in [k for k in d.keys() if k.startswith('posterior_')]:
-            d[k].parent = weakref.proxy( self )
-        if d.has_key('_reducer'):
-            d['_reducer'].parent = weakref.proxy( self )
-        # save
-        self.__dict__ = d
-
-
-
-    """ Useful properties """
-
-    # for dimensionality reduction: where to truncate the spectrum
-    cutoff_lambda = 1e-12
-
-    @property
-    def N_theta( self ):
-        """ Number of hyperparameters. """
-        return len( self.hyperparameter_names )
-
-    @property
-    def N_observations( self ):
-        return self.T_training
-
     
-    """
-    ========
-    Plotting
-    ========
-    """
-    
-
-    def plot_y( self, posterior=None, **kw ):
-        """ Plot spike counts. See `Data.plot_k` for docstring. 
-        
-        By default, this plots `self.posterior`, unless an alternative
-        posterior is provided.
-        
-        """
-        if posterior is None:
-            posterior = self.posterior
-
-        return self.data.plot_y( posterior, **kw )
-
 
     """
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -2242,11 +2284,6 @@ class Solver( AutoCR ):
             # make negative
             return -dpsi__i
 
-    """
-    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-    Solving
-    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-    """
 
 
 
