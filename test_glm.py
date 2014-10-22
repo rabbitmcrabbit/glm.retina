@@ -183,7 +183,7 @@ def test_LP_derivatives():
 @attr('slow')
 def test_LE_derivatives():
     """ Matching analytic and empirical derivatives of log posterior. """
-    kw = { 'error_if_fail':True, 'error_threshold':0.01 }
+    kw = { 'error_if_fail':True, 'error_threshold':0.05, 'eps':1e-3 }
     for nl in progress.numbers( ['exp', 'soft'] ):
         # create demo data
         d = SimulatedData( N_sec=5 )

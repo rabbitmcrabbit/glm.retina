@@ -1950,12 +1950,18 @@ class Solver( AutoCacherAndReloader ):
         """ Log evidence, assuming Laplace posterior. """
         return np.sum( evidence_components )
 
-    @cached( cskip = ('is_posterior', False, ['X_star__te', 'mu__t']) )
-    def E_star__ee( is_posterior, X_star__te, mu__t ):
+    @cached #( cskip = ('is_posterior', False, ['X_star__te', 'mu__t']) )
+    def E_star__ee( is_posterior, d2LP_training, D_star, l_star_inv__e ):
+        #X_star__te, mu__t ):
         """ Hessian of neg log likelihood, for local evidence approx """
         if not is_posterior:
             raise TypeError('attribute only available for posterior.')
-        return dot( X_star__te.T, mu__t[:, na] * X_star__te )
+        # start with -d2LP
+        E = -d2LP_training
+        # remove -d2LPrior from the diagonal
+        E[ range(D_star), range(D_star) ] -= l_star_inv__e
+        return E
+        #return dot( X_star__te.T, mu__t[:, na] * X_star__te )
 
     """
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -2189,12 +2195,17 @@ class Solver( AutoCacherAndReloader ):
         return dot( X_plus__tf, k_c_plus__f )
 
     @cached
-    def mu_c__t( z_c__t, nonlinearity ):
+    def ez_c__t( z_c__t ):
+        """ Intermediate computation """
+        return exp( z_c__t )
+
+    @cached
+    def mu_c__t( ez_c__t, nonlinearity ):
         """ Expected firing rate for `theta_c` approx posterior mode. """
         if nonlinearity == 'exp':
-            return exp( z_c__t )
+            return ez_c__t
         elif nonlinearity == 'soft':
-            return log( 1 + exp(z_c__t) ) / log(2)
+            return log( 1 + ez_c__t ) / log(2)
         else:
             self._raise_bad_nonlinearity()
 
@@ -2244,7 +2255,8 @@ class Solver( AutoCacherAndReloader ):
             posterior, dC_dtheta__idd, dl_dtheta__id, R_c_star__ef, data, 
             mu_c__t, X_plus__tf, slice_by_training, C_c_plus__ff, E_n_plus__ff,
             Lambda_c_plus__ff, Cinv_c_plus__ff, k_c_plus__f, dims_c_star,
-            l_c_plus__f, N_theta, Lambdainv_c_plus__ff ):
+            l_c_plus__f, N_theta, Lambdainv_c_plus__ff, ez_c__t,
+            _raise_bad_nonlinearity, nonlinearity ):
         """ Jacobian of local evidence objective. """
         # diagonal case
         if C_is_diagonal:
@@ -2262,10 +2274,16 @@ class Solver( AutoCacherAndReloader ):
                         dl[ dims_c_star ] for dl in dl_dtheta_star__ie ]
 
             # residuals at candidate solution
-            resid__t = slice_by_training( data.y__t - mu_c__t )
+            resid_c__t = slice_by_training( data.y__t - mu_c__t )
             # intermediate quantities
             X_plus__tf = slice_by_training( X_plus__tf )
-            dLL_dk_c__f = dot( X_plus__tf.T, resid__t )
+            if nonlinearity == 'exp':
+                dLL_dk_c__f = dot( X_plus__tf.T, resid_c__t )
+            elif nonlinearity == 'soft':
+                dF_c__t = ez_c__t / (1 + ez_c__t) / log(2)
+                dLL_dk_c__f = dot( X_plus__tf.T, resid_c__t * dF_c__t / mu_c__t )
+            else:
+                _raise_bad_nonlinearity()
             C_En__ff = l_c_plus__f[:, na] * E_n_plus__ff
             Lam_Cinv__ff = Lambda_c_plus__ff / l_c_plus__f[na, :]
             kT_En_minus_Cinv__f = dot( 
@@ -2302,10 +2320,16 @@ class Solver( AutoCacherAndReloader ):
                     for dC__ee in dC_dtheta_star__iee ]
 
             # residuals at candidate solution
-            resid = slice_by_training( data.y__t - mu_c__t )
+            resid_c__t = slice_by_training( data.y__t - mu_c__t )
             # intermediate quantities( all in +-space )
             X_plus__tf = slice_by_training( X_plus__tf )
-            dLL_dk_c__f = dot( X_plus__tf.T, resid__t )
+            if nonlinearity == 'exp':
+                dLL_dk_c__f = dot( X_plus__tf.T, resid_c__t )
+            elif nonlinearity == 'soft':
+                dF_c__t = ez_c__t / (1 + ez_c__t) / log(2)
+                dLL_dk_c__f = dot( X_plus__tf.T, resid_c__t * dF_c__t / mu_c__t )
+            else:
+                _raise_bad_nonlinearity()
             C_En__ff = dot( C_c_plus__ff, E_n_plus__ff )
             Lam_Cinv__ff = dot( Lambda_c_plus__ff, Cinv_c_plus__ff )
             kT_En_minus_Cinv__f = dot( 
