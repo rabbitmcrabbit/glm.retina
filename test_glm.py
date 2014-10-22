@@ -168,39 +168,42 @@ Derivatives
 @attr('fast')
 def test_LP_derivatives():
     """ Matching analytic and empirical derivatives of log posterior. """
-    # create demo data, with monotonically increasing `h`
-    d = SimulatedData( N_sec=5.12 )
-    r = Ridge( d )
-    r.theta = [5]
-    r.calc_posterior()
-    kw = { 'error_if_fail':True, 'error_threshold':0.01 }
-    # check LP derivatives at random point
-    r.v = normal( size=r.required_v_length )
-    r.check_LP_derivatives( **kw )
+    kw = { 'error_if_fail':True, 'error_threshold':0.02, 'eps':1e-3 }
+    for nl in progress.numbers( ['exp', 'soft'] ):
+        # create demo data
+        d = SimulatedData( N_sec=5 )
+        r = Ridge( d, nonlinearity=nl, testing_proportion=0.2 )
+        r.theta = [5]
+        r.calc_posterior( verbose=0 )
+        # check LP derivatives at random point
+        r.v = normal( size=r.required_v_length )
+        r.check_LP_derivatives( **kw )
 
 
 @attr('slow')
 def test_LE_derivatives():
     """ Matching analytic and empirical derivatives of log posterior. """
-    # create demo data, with monotonically increasing `h`
-    d = SimulatedData( N_sec=5.12 )
-    r = Ridge( d )
-    r.theta = [5]
-    r.calc_posterior()
     kw = { 'error_if_fail':True, 'error_threshold':0.01 }
-    # check LE derivatives at theta_h_n = theta_h
-    r.check_LE_derivatives( **kw )
-    # check LE derivatives at another point
-    r.theta_k = [1]
-    r.check_LE_derivatives( **kw )
+    for nl in progress.numbers( ['exp', 'soft'] ):
+        # create demo data
+        d = SimulatedData( N_sec=5 )
+        r = Ridge( d, nonlinearity=nl )
+        r.theta = [5]
+        r.calc_posterior( verbose=0 )
+        # check LE derivatives at theta_h_n = theta_h
+        r.check_LE_derivatives( **kw )
+        # check LE derivatives at another point
+        r.theta_k = [1]
+        r.check_LE_derivatives( **kw )
 
 @attr('fast')
 def test_ridge_derivatives():
-    # create demo data, with monotonically increasing `h`
-    d = SimulatedData( N_sec=5.12 )
+    # create demo data
+    d = SimulatedData( N_sec=5 )
     r = Ridge( d )
     r.theta = [5]
     r.check_l_derivatives( error_if_fail=True, error_threshold=0.01 )
+
 
 
 

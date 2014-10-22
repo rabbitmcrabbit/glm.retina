@@ -1353,7 +1353,7 @@ class Solver( AutoCacherAndReloader ):
         print ' '
         # raise error?
         if error_if_fail and (err2 > error_threshold):
-            raise ValueError('Hessian of LP failed at %.6f' % err1 )
+            raise ValueError('Hessian of LP failed at %.6f' % err2 )
         # debug
         if debug:
             tracer()
@@ -1794,9 +1794,28 @@ class Solver( AutoCacherAndReloader ):
         return zero_during_testing( data.y__t - mu__t )
 
     @cached
-    def dLL_training( resid__t, X_star__te ):
+    def dF__t( nonlinearity, ez__t ):
+        if nonlinearity == 'exp':
+            return ez__t
+        elif nonlinearity == 'soft':
+            return ez__t / (1 + ez__t) / log(2)
+        else:
+            raise self._raise_bad_nonlinearity()
+
+    @cached( cskip = ('nonlinearity', 'exp', ['dF__t', 'mu__t'] ) )
+    def dF_on_F__t( nonlinearity, dF__t, mu__t ):
+        if nonlinearity == 'exp':
+            return 1
+        else:
+            return dF__t / mu__t
+
+    @cached( cskip = ('nonlinearity', 'exp', 'dF_on_F__t') )
+    def dLL_training( nonlinearity, resid__t, X_star__te, dF_on_F__t ):
         """ Jacobian of training log likelihood wrt `k_star__e`. """
-        return dot( X_star__te.T, resid__t )
+        if nonlinearity == 'exp':
+            return dot( X_star__te.T, resid__t )
+        else:
+            return dot( X_star__te.T, resid__t * dF_on_F__t )
 
     @cached
     def dLPrior( l_star_inv__e, k_star__e ):
@@ -1811,14 +1830,32 @@ class Solver( AutoCacherAndReloader ):
     """ Hessian """
 
     @cached
+    def d2F__t( nonlinearity, ez__t ):
+        if nonlinearity == 'exp':
+            return ez__t
+        elif nonlinearity == 'soft':
+            return ez__t / ( (1 + ez__t)**2 ) / log(2)
+        else:
+            raise self._raise_bad_nonlinearity()
+
+    @cached( cskip = 
+            ('nonlinearity', 'exp', ['dF_on_F__t', 'resid__t', 'd2F__t']) )
     def d2LP_training( mu__t, D_star, slice_by_training, X_star__te, 
-            l_star_inv__e ):
+            l_star_inv__e, nonlinearity, dF_on_F__t, d2F__t, resid__t,
+            y_training__t):
         """ Hessian of training log prob wrt `k_star__e`. """
         # training data only
         mu__t = slice_by_training( mu__t )
         X_star__te = slice_by_training( X_star__te )
         # evaluate d2LL
-        d2LP = -dot( X_star__te.T, mu__t[:, na] * X_star__te )
+        if nonlinearity == 'exp':
+            diag__t = -mu__t
+        else:
+            resid__t = slice_by_training( resid__t )
+            d2F__t = slice_by_training( d2F__t )
+            dF_on_F__t = slice_by_training( dF_on_F__t )
+            diag__t = (resid__t * d2F__t / mu__t ) - (y_training__t * dF_on_F__t**2)
+        d2LP = dot( X_star__te.T, diag__t[:, na] * X_star__te )
         # add d2LPrior to the diagonal
         d2LP[ range(D_star), range(D_star) ] -= l_star_inv__e
         return d2LP
