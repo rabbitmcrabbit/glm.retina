@@ -414,7 +414,7 @@ class Solver( AutoCacherAndReloader ):
             if len( v ) == self.required_v_length:
                 return
             else:
-                delattr( self, v )
+                delattr( self, 'v' )
         # recast `v` from posterior or initial conditions
         if hasattr( self, 'posterior' ):
             self.v = self.reproject_to_v( posterior=self.posterior )

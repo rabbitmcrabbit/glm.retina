@@ -107,7 +107,7 @@ class SimulatedDataHistory( SimulatedData ):
             z += k_const
         # generate spikes (very inefficient)
         y = np.zeros_like(mu)
-        for t in progress.dots(range(len(y)), 'sampling from generative model'):
+        for t in range( len(y) ):
             if t == 0:
                 mu_history = 1.
             elif t <= self.D_history:
