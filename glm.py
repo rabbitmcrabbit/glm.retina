@@ -575,9 +575,9 @@ class Solver( AutoCacherAndReloader ):
             return super( Solver, self )._clear_descendants( name )
 
     """
-    ---------------
-    Solving for `k`
-    ---------------
+    --------------------------------------
+    Solving for the parameter vector, `v`
+    --------------------------------------
     """
     
     def calc_posterior( self, xtol=None, ftol_per_obs=None, verbose=1 ):
@@ -660,9 +660,9 @@ class Solver( AutoCacherAndReloader ):
         p.csetattr( 'v', v_hat )
 
     """
-    -------------------
-    Solving for `theta`
-    -------------------
+    ----------------------------------------------
+    Solving for the hyperparameter vector, `theta`
+    ----------------------------------------------
     """
 
     def solve_theta( self, grid_search=False, ftol_per_obs=None, 
@@ -1068,6 +1068,10 @@ class Solver( AutoCacherAndReloader ):
     ===================
     Derivative checking
     ===================
+
+    These are methods to ensure that the provided analytical derivatives
+    are correct, by comparing them with empirically-calculated derivatives.
+
     """
     
     def check_LP_derivatives( self, eps=1e-6, debug=False, 
@@ -1365,7 +1369,7 @@ class Solver( AutoCacherAndReloader ):
 
     """
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-    Solving for `k`
+    Solving for the parameter vector, `v`
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
     """
 
@@ -1659,7 +1663,9 @@ class Solver( AutoCacherAndReloader ):
             resid__t = slice_by_training( resid__t )
             d2F__t = slice_by_training( d2F__t )
             dF_on_F__t = slice_by_training( dF_on_F__t )
-            diag__t = (resid__t * d2F__t / mu__t ) - (y_training__t * dF_on_F__t**2)
+            diag__t = (
+                    (resid__t * d2F__t / mu__t ) - 
+                    (y_training__t * dF_on_F__t**2) )
         d2LP = dot( X_star__te.T, diag__t[:, na] * X_star__te )
         # add d2LPrior to the diagonal
         d2LP[ range(D_star), range(D_star) ] -= l_star_inv__e
@@ -2086,7 +2092,7 @@ class Solver( AutoCacherAndReloader ):
                 dLL_dk_c__f = dot( X_plus__tf.T, resid_c__t )
             elif nonlinearity == 'soft':
                 dF_c__t = ez_c__t / (1 + ez_c__t) / log(2)
-                dLL_dk_c__f = dot( X_plus__tf.T, resid_c__t * dF_c__t / mu_c__t )
+                dLL_dk_c__f = dot( X_plus__tf.T, resid_c__t * dF_c__t/mu_c__t )
             else:
                 _raise_bad_nonlinearity()
             C_En__ff = l_c_plus__f[:, na] * E_n_plus__ff
@@ -2132,7 +2138,7 @@ class Solver( AutoCacherAndReloader ):
                 dLL_dk_c__f = dot( X_plus__tf.T, resid_c__t )
             elif nonlinearity == 'soft':
                 dF_c__t = ez_c__t / (1 + ez_c__t) / log(2)
-                dLL_dk_c__f = dot( X_plus__tf.T, resid_c__t * dF_c__t / mu_c__t )
+                dLL_dk_c__f = dot( X_plus__tf.T, resid_c__t * dF_c__t/mu_c__t )
             else:
                 _raise_bad_nonlinearity()
             C_En__ff = dot( C_c_plus__ff, E_n_plus__ff )
