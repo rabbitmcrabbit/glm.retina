@@ -1539,8 +1539,8 @@ class Solver( AutoCacherAndReloader ):
         """ Calculates `v` from `k__d`. Does not change object's state.
 
         Given a weight vector, `k__d`, this rotates and projects it into
-        the *-space induced by the current prior (specified by `theta`), and
-        returns the result.
+        the *-space induced by the current prior (specified by `self.theta`), 
+        and returns the result.
         
         Provide exactly one of `k__d` *or* a posterior containing `k__d`.
         
@@ -1564,6 +1564,12 @@ class Solver( AutoCacherAndReloader ):
     ====================
     Log posterior on `k`
     ====================
+
+    To compute the log posterior, we first evaluate the likelihood. This
+    depends on calculating the mean firing rate, mu = F(Xk).
+
+    We then compute its Jacobian and Hessian wrt `v`.
+
     """
 
     def _raise_bad_nonlinearity( self ):
@@ -1586,7 +1592,7 @@ class Solver( AutoCacherAndReloader ):
 
     @cached
     def mu__t( ez__t, nonlinearity ):
-        """ Expected firing rate """
+        """ Expected firing rate, i.e. F(Xk). """
         if nonlinearity == 'exp':
             return ez__t
         elif nonlinearity == 'soft':
@@ -1596,7 +1602,7 @@ class Solver( AutoCacherAndReloader ):
 
     @cached( cskip = ('nonlinearity', 'exp', 'mu__t') )
     def log_mu__t( nonlinearity, z__t, mu__t ):
-        """ Log of expected firing rate """
+        """ Log of expected firing rate. """
         if nonlinearity == 'exp':
             return z__t
         else:
@@ -1632,6 +1638,7 @@ class Solver( AutoCacherAndReloader ):
 
     @cached
     def dF__t( nonlinearity, ez__t ):
+        """ Derivative F'(Xk) """
         if nonlinearity == 'exp':
             return ez__t
         elif nonlinearity == 'soft':
@@ -1641,6 +1648,7 @@ class Solver( AutoCacherAndReloader ):
 
     @cached( cskip = ('nonlinearity', 'exp', ['dF__t', 'mu__t'] ) )
     def dF_on_F__t( nonlinearity, dF__t, mu__t ):
+        """ Intermediate computation: F'(Xk)/F(Xk). """
         if nonlinearity == 'exp':
             return 1
         else:
@@ -1668,6 +1676,7 @@ class Solver( AutoCacherAndReloader ):
 
     @cached
     def d2F__t( nonlinearity, ez__t ):
+        """ Derivative F''(Xk). """
         if nonlinearity == 'exp':
             return ez__t
         elif nonlinearity == 'soft':
@@ -1680,7 +1689,7 @@ class Solver( AutoCacherAndReloader ):
     def d2LP_training( mu__t, D_star, slice_by_training, X_star__te, 
             l_star_inv__e, nonlinearity, dF_on_F__t, d2F__t, resid__t,
             y_training__t):
-        """ Hessian of training log prob wrt `k_star__e`. """
+        """ Hessian of training log posterior wrt `k_star__e`. """
         # training data only
         mu__t = slice_by_training( mu__t )
         X_star__te = slice_by_training( X_star__te )
@@ -1703,6 +1712,10 @@ class Solver( AutoCacherAndReloader ):
     ================
     Solution for `k`
     ================
+
+    The optimisation algorithm needs to minimise -LP. This provides interface
+    attributes for that. 
+
     """
 
     @cached
@@ -1734,7 +1747,11 @@ class Solver( AutoCacherAndReloader ):
 
     Note that these can only be calculated for a posterior, as they depend
     on knowing the posterior mode (`k_star__e`), and the curvature around
-    the mode.
+    the mode. If one attempts to access these attributes for non-posterior
+    objects, a TypeError will be raised.
+
+    Once the posterior mode and covariance have been calculated, then the
+    approximate marginal likelihood (i.e. evidence) can be calculated.
 
     """
     
