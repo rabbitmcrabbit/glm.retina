@@ -168,12 +168,7 @@ class Solver( AutoCacherAndReloader ):
 
     """
 
-    """ 
-    ----------
-    Constants 
-    ----------
-    """
-
+    # CONSTANTS
     # for dimensionality reduction: where to truncate the spectrum
     cutoff_lambda = 1e-12
     ftol_per_obs = 1e-5
@@ -317,34 +312,90 @@ class Solver( AutoCacherAndReloader ):
     ===================
     Initial conditions
     ===================
-    """
-    
-    def Prior_class( self ):
-        """ Returns the superclass that defines `l__d` or `C__dd`. """
-        return [ c for c in self.__class__.mro() 
-                if c.__dict__.has_key('l__d') 
-                or c.__dict__.has_key('C__dd') ][ 0 ]
 
+    An object may be supplied with initial conditions for the parameters (`k`)
+    and/or hyperparameters (`theta`). These methods define how to parse these 
+    initial conditions, or what `k` and `theta` need to default to when 
+    nothing is provided.
+
+    """
+
+    def parse_initial_conditions( self, initial_conditions ):
+        """ Sets up the initial conditions for the model. """
+        # initialise `k` and `theta` to global defaults
+        self.initial_conditions = ics = Bunch()
+        ics['k__d'] = zeros( self.D )
+        ics['theta'] = self.default_theta0
+        # parse initial conditions: None
+        if initial_conditions == None:
+            pass
+        # parse initial_conditions: dict
+        elif isinstance( initial_conditions, dict ):
+            for k in ics.keys():
+                ics[k] = initial_conditions.get( k, ics[k] )
+        # parse initial_conditions: Solver object
+        else: 
+            # copy posterior
+            if hasattr( initial_conditions, 'posterior' ):
+                ics['k__d'] = initial_conditions.posterior.k__d
+            # recast values of `theta`
+            try:
+                ics['theta'] = self.recast_theta( initial_conditions )
+            except TypeError:
+                pass
+        # replace any invalid values
+        for i in range( self.N_theta ):
+            if (ics['theta'][i] is None) or (ics['theta'][i] == np.nan):
+                ics['theta'] = self.default_theta0[i]
+    
     def recast_theta( self, ic ):
-        """ Process results of previous solver to determine initial `theta`.
+        """ Process results of previous Solver to determine initial `theta`.
+
+        When provided with an initial condition `ic` which is another Solver
+        object, this extracts `ic.theta` and reconfigures it to be compatible
+        with the current class. 
+
+        Here, if initial conditions come from the same Prior class, then
+        inherit the fitted theta. Any other behaviour requires subclassing.
 
         Arguments:
         - `ic` : previously solved version of model
         
-        Default: if initial conditions come from the same Prior class, then
-        inherit the fitted theta.
-        
-        Subclass for additional behaviour.
-
         """
         c1 = ic.Prior_class
         c2 = self.Prior_class
         if c1 == c2:
             return ic.posterior.theta
         else:
-            err_str = 'subclass how to recast theta from %s to %s '
-            err_str = err_str % ( c1.__name__, c2.__name__ )
+            err_str = 'subclass %s to define how to recast theta from %s to %s '
+            err_str = err_str % ( c2.__name__, c1.__name__, c2.__name__ )
             raise TypeError( err_str )
+
+    def Prior_class( self ):
+        """ Returns the superclass of `self` that defines the prior covariance. 
+
+        This checks the method resolution order, and finds the definition of
+        the covariance matrix `C__dd`, or its diagonal `l__d`.
+        
+        """
+        return [ c for c in self.__class__.mro() 
+                if c.__dict__.has_key('l__d') 
+                or c.__dict__.has_key('C__dd') ][ 0 ]
+
+    """
+    ==========================
+    Resetting `v` and `theta`
+    ==========================
+
+    At initialisation, and sometimes afterwards, we need to reset the
+    parameter vector (`v`), and the hyperparameters (`theta`). The `reset`
+    methods wipe the current values, and retrieve the values from the saved 
+    posterior object (if available), else the initial conditions. The 
+    `initialise` methods only do this if there are no current values of `v` 
+    and/or `theta` (or if these are not valid, e.g. are of the wrong 
+    dimensionality.)
+
+    """
 
     def initialise_theta( self ):
         """ If `theta` is not set, set it from initial conditions. """
@@ -363,7 +414,7 @@ class Solver( AutoCacherAndReloader ):
             if len( v ) == self.required_v_length:
                 return
             else:
-                delattr( self, v + '_vec' )
+                delattr( self, v )
         # recast `v` from posterior or initial conditions
         if hasattr( self, 'posterior' ):
             self.v = self.reproject_to_v( posterior=self.posterior )
@@ -395,38 +446,6 @@ class Solver( AutoCacherAndReloader ):
         # initialise posterior
         p = self.posterior = self.create_posterior( theta=self.theta, v=self.v )
         p.is_point_estimate = True
-
-    @property
-    def grid_search_theta_available( self ):
-        return hasattr( self, 'grid_search_theta_parameters' )
-
-    def parse_initial_conditions( self, initial_conditions ):
-        """ Sets up the initial conditions for the model. """
-        # global defaults
-        self.initial_conditions = ics = Bunch()
-        ics['k__d'] = zeros( self.D )
-        ics['theta'] = self.default_theta0
-        # parse initial conditions: None
-        if initial_conditions == None:
-            pass
-        # parse initial_conditions: dict
-        elif isinstance( initial_conditions, dict ):
-            for k in ics.keys():
-                ics[k] = initial_conditions.get( k, ics[k] )
-        # parse initial_conditions: Solver object
-        else: 
-            # copy posterior
-            if hasattr( initial_conditions, 'posterior' ):
-                ics['k__d'] = initial_conditions.posterior.k__d
-            # recast values of `theta`
-            try:
-                ics['theta'] = self.recast_theta( initial_conditions )
-            except TypeError:
-                pass
-        # replace any invalid values
-        for i in range( self.N_theta ):
-            if (ics['theta'][i] is None) or (ics['theta'][i] == np.nan):
-                ics['theta'] = self.default_theta0[i]
 
     """
     =========================
@@ -486,10 +505,10 @@ class Solver( AutoCacherAndReloader ):
     `v` / `k_star` / `k`), and by taking a Laplace estimate (stored in
     `Lambda` and its variants).
 
-    When these is calculated, they are saved in `self.posterior`. This 
-    attribute is an object of the same class as `self`, but have a flag
-    `is_posterior` set to True. Also the cache is immutable, to prevent
-    accidental changes.
+    When the posterior is calculated, it is saved in `self.posterior`. This 
+    attribute is an object of the same class as `self`, but has a flag
+    `is_posterior` set to True. Also the cache of the posterior object is 
+    immutable, to prevent accidental changes.
 
     There is also the question of how to choose `theta`. This is determined
     by calculating the marginal likelihood (i.e. the evidence) of the
@@ -694,6 +713,11 @@ class Solver( AutoCacherAndReloader ):
             theta = self.theta
         # save
         g(theta)
+
+    @property
+    def grid_search_theta_available( self ):
+        """ Can we grid search to find `theta`. """
+        return hasattr( self, 'grid_search_theta_parameters' )
 
     def solve_theta( self, grid_search=False, ftol_per_obs=None, 
             max_iterations=10, verbose=1, **kw ):
