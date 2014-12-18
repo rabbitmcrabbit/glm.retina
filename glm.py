@@ -1371,6 +1371,20 @@ class Solver( AutoCacherAndReloader ):
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
     Solving for the parameter vector, `v`
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+    The goal is produce a posterior over the weights, `k`. When we put a prior
+    over `k`, this might suppress some dimensions on `k` enough that it
+    becomes worthwhile to project out these dimensions entirely. The 
+    optimisation then operates over a reduced-dimensionality vector, `k_star`.
+
+    We use the symbol `v` to refer to the vector that is being directly 
+    optimised. Generally, `v = k_star`.
+
+    In what follows, we define the components of the objective function over
+    `v`, and then how to optimise. This will typically be a convex objective.
+
+    Also note that this section makes extensive use of cached variables.
+
     """
 
     @cached
@@ -1398,6 +1412,10 @@ class Solver( AutoCacherAndReloader ):
     is given, then the attribute `C_is_diagonal` must be set to False. In this
     case, it is assumed that the parametric form of the covariance matrix
     ensures it is *always* diagonal.
+
+    The forms of the prior covariance matrix (and its derivatives wrt `theta`)
+    must be defined in subclasses. If they are not defined, accessing these
+    attributes will throw a TypeError.
     
     """
 
@@ -1407,7 +1425,7 @@ class Solver( AutoCacherAndReloader ):
 
     @cached
     def C__dd( C_is_diagonal ):
-        """ Prior covariance on `k` """
+        """ Prior covariance on `k`. """
         if C_is_diagonal:
             return None
         else:
@@ -1415,7 +1433,7 @@ class Solver( AutoCacherAndReloader ):
         
     @cached
     def dC_dtheta__idd():
-        """ Jacobian of prior covariance wrt `theta` """
+        """ Jacobian of prior covariance wrt `theta`. """
         self._raise_must_subclass('dC_dtheta')
 
     @cached
@@ -1440,22 +1458,27 @@ class Solver( AutoCacherAndReloader ):
        
     @cached
     def dl_dtheta__id():
-        """ Jacobian of the diagonal prior covariance wrt `theta` """
+        """ Jacobian of the diagonal prior covariance wrt `theta`. """
         self._raise_must_subclass('dl_dtheta')
 
     @cached
     def dims( l__d, cutoff_lambda ):
-        """ Boolean vector of dimensions to keep, from the eigenspectrum. """
+        """ Boolean vector of dimensions to keep, from the eigenspectrum. 
+        
+        If any eigenvalues of the prior covariance are sufficiently small,
+        the corresponding eigenvectors are projected out.
+        
+        """
         return ( l__d/maxabs(l__d) > cutoff_lambda )
 
     @cached
     def D_star( dims ):
-        """ How many dimensions in the reduced space """
+        """ How many dimensions in the reduced space. """
         return np.sum( dims )
 
     @cached
     def required_v_length( D_star ):
-        """ Number of parameters in `v`, based on `len(k_star__e)` """
+        """ Number of parameters in `v`, based on `len(k_star__e)`. """
         return D_star
 
     @cached
@@ -1475,7 +1498,7 @@ class Solver( AutoCacherAndReloader ):
         ('R_is_identity', True, ['dims', 'R__de']),
         ('C_is_diagonal', True, 'R__de') ] )
     def X_star__te( R_is_identity, C_is_diagonal, data, dims, R__de ):
-        """ Dimensionality-reduced matrix of regressors """ 
+        """ Dimensionality-reduced matrix of regressors. """ 
         if R_is_identity:
             return data.X__td
         elif C_is_diagonal:
@@ -1495,6 +1518,7 @@ class Solver( AutoCacherAndReloader ):
 
     @cached
     def logdet_C_star( l_star__e ):
+        """ Log determinant of reduced covariance matrix. """
         return np.sum(log(l_star__e))
 
     @cached( cskip=[
@@ -1512,9 +1536,13 @@ class Solver( AutoCacherAndReloader ):
             return dot( R__de.T, k_star__e )
 
     def reproject_to_v( self, k__d=None, posterior=None ):
-        """ Calculates `v` from `k__d`. Does not change object's state. 
+        """ Calculates `v` from `k__d`. Does not change object's state.
+
+        Given a weight vector, `k__d`, this rotates and projects it into
+        the *-space induced by the current prior (specified by `theta`), and
+        returns the result.
         
-        Can either provide `k__d` *or* a posterior containing this attribute.
+        Provide exactly one of `k__d` *or* a posterior containing `k__d`.
         
         """
         # check inputs
@@ -1776,7 +1804,7 @@ class Solver( AutoCacherAndReloader ):
 
     """
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-    Solving for `theta`
+    Solving for the hyperparameter vector, `theta`
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
     """
 
