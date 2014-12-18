@@ -1482,29 +1482,29 @@ class Solver( AutoCacherAndReloader ):
         return D_star
 
     @cached
-    def R__de( C_eig, dims, C_is_diagonal ):
-        """ Rotation and projection matrix: *-space to full-space. """
+    def R__ed( C_eig, dims, C_is_diagonal ):
+        """ Rotation and projection matrix: full-space to *-space. """
         return C_eig['Q'][ :, dims ].T
 
-    @cached( cskip=('C_is_diagonal', True, ['C_eig', 'R__de', 'D_star']) )
-    def R_is_identity( C_is_diagonal, C_eig, dims, R__de, D_star ):
+    @cached( cskip=('C_is_diagonal', True, ['C_eig', 'R__ed', 'D_star']) )
+    def R_is_identity( C_is_diagonal, C_eig, dims, R__ed, D_star ):
         """ Is the rotation/projection operator the identity. """
         if C_is_diagonal:
             return np.all(dims) 
         else:
-            return ( np.all(dims) and np.array_equal(R__de, eye(D_star)) )
+            return ( np.all(dims) and np.array_equal(R__ed, eye(D_star)) )
 
     @cached( cskip=[ 
-        ('R_is_identity', True, ['dims', 'R__de']),
-        ('C_is_diagonal', True, 'R__de') ] )
-    def X_star__te( R_is_identity, C_is_diagonal, data, dims, R__de ):
+        ('R_is_identity', True, ['dims', 'R__ed']),
+        ('C_is_diagonal', True, 'R__ed') ] )
+    def X_star__te( R_is_identity, C_is_diagonal, data, dims, R__ed ):
         """ Dimensionality-reduced matrix of regressors. """ 
         if R_is_identity:
             return data.X__td
         elif C_is_diagonal:
             return data.X__td[:, dims]
         else:
-            return dot( data.X__td, R__de.T )
+            return dot( data.X__td, R__ed.T )
 
     @cached
     def l_star__e( l__d, dims ):
@@ -1522,9 +1522,9 @@ class Solver( AutoCacherAndReloader ):
         return np.sum(log(l_star__e))
 
     @cached( cskip=[
-        ('R_is_identity', True, ['dims', 'R__de', 'D']),
-        ('C_is_diagonal', True, ['R__de']) ])
-    def k__d( k_star__e, R_is_identity, C_is_diagonal, dims, R__de, D ):
+        ('R_is_identity', True, ['dims', 'R__ed', 'D']),
+        ('C_is_diagonal', True, ['R__ed']) ])
+    def k__d( k_star__e, R_is_identity, C_is_diagonal, dims, R__ed, D ):
         """ Expand the *-space kernel to the full kernel. """
         if R_is_identity:
             return k_star__e
@@ -1533,7 +1533,7 @@ class Solver( AutoCacherAndReloader ):
             k__d[ dims ] = k_star__e
             return k__d
         else:
-            return dot( R__de.T, k_star__e )
+            return dot( R__ed.T, k_star__e )
 
     def reproject_to_v( self, k__d=None, posterior=None ):
         """ Calculates `v` from `k__d`. Does not change object's state.
@@ -1558,7 +1558,7 @@ class Solver( AutoCacherAndReloader ):
             elif self.C_is_diagonal:
                 return k__d[ self.dims ]
             else:
-                return dot( self.R__de.T, k__d )
+                return dot( self.R__ed, k__d )
 
     """
     ====================
@@ -1768,10 +1768,10 @@ class Solver( AutoCacherAndReloader ):
         return inv( Lambdainv_star__ee )
 
     @cached( cskip = [
-        ('R_is_identity', True, ['R__de', 'D', 'dims']),
-        ('C_is_diagonal', True, 'R__de') ])
+        ('R_is_identity', True, ['R__ed', 'D', 'dims']),
+        ('C_is_diagonal', True, 'R__ed') ])
     def Lambda__dd( Lambda_star__ee, R_is_identity, C_is_diagonal, dims, 
-            R__de, D ):
+            R__ed, D ):
         """ Posterior covariance, in full space. """
         # if there is no dimensionality reduction
         if R_is_identity:
@@ -1785,7 +1785,7 @@ class Solver( AutoCacherAndReloader ):
             return Lambda__dd
         # if the dimensionality reduction is rotation + projection
         else:
-            return mdot( R__de, Lambda_star__ee, R__de.T )
+            return mdot( R__ed.T, Lambda_star__ee, R__ed )
 
     @cached
     def logdet_Lambdainv_star( Lambdainv_star__ee ):
@@ -1864,7 +1864,7 @@ class Solver( AutoCacherAndReloader ):
             return C__dd
         # otherwise project
         else:
-            return mdot( posterior.R__de.T, C__dd, posterior.R__de )
+            return mdot( posterior.R__ed, C__dd, posterior.R__ed.T )
         # TO DO: if posterior.C_is_diagonal
         # (shortcuts available here to save time)
 
@@ -1917,8 +1917,8 @@ class Solver( AutoCacherAndReloader ):
                 return 'rotate'
 
     @cached
-    def R_c_star__ef( C_c_eig, dims_c_star ):
-        """ Projection+rotation for 2nd dim reduction: +-space to *-space """
+    def R_c_star__fe( C_c_eig, dims_c_star ):
+        """ Projection+rotation for 2nd dim reduction: *-space to +-space """
         return C_c_eig['Q_c_star'][:, dims_c_star].T
 
     @cached( cskip=[
@@ -1950,9 +1950,9 @@ class Solver( AutoCacherAndReloader ):
         return np.sum( dims_c_star )
 
     @cached( cskip = [
-        ('second_dr_k', 'none', 'R_c_star__ef'),
-        ('second_dr_k', 'project', 'R_c_star__ef') ])
-    def E_n_plus__ff( second_dr_k, posterior, dims_c_star, R_c_star__ef ):
+        ('second_dr_k', 'none', 'R_c_star__fe'),
+        ('second_dr_k', 'project', 'R_c_star__fe') ])
+    def E_n_plus__ff( second_dr_k, posterior, dims_c_star, R_c_star__fe ):
         """ Hessian of -LL at `theta_n` posterior mode, in +-space. """
         # retrieve
         E__ee = posterior.E_star__ee
@@ -1963,12 +1963,12 @@ class Solver( AutoCacherAndReloader ):
             idx = dims_c_star
             return E__ee[idx, :][:, idx]
         else: 
-            return mdot( R_c_star__ef.T, E__ee, R_c_star__ef )
+            return mdot( R_c_star__fe, E__ee, R_c_star__fe.T )
 
     @cached( cskip = [
-        ('second_dr_k', 'none', 'R_c_star__ef'),
-        ('second_dr_k', 'project', 'R_c_star__ef') ])
-    def Lambdainv_n_plus__ff(second_dr_k, posterior, dims_c_star, R_c_star__ef):
+        ('second_dr_k', 'none', 'R_c_star__fe'),
+        ('second_dr_k', 'project', 'R_c_star__fe') ])
+    def Lambdainv_n_plus__ff(second_dr_k, posterior, dims_c_star, R_c_star__fe):
         """ Posterior precision at `theta_n`, in +-space. """
         # retrieve
         Laminv__ee = posterior.Lambdainv_star__ee
@@ -1979,12 +1979,12 @@ class Solver( AutoCacherAndReloader ):
             idx = dims_c_star
             return Laminv__ee[idx, :][:, idx]
         else: 
-            return mdot( R_c_star__ef.T, Laminv__ee, R_c_star__ef )
+            return mdot( R_c_star__fe, Laminv__ee, R_c_star__fe.T )
 
     @cached( cskip = [
-        ('second_dr_k', 'none', 'R_c_star__ef'),
-        ('second_dr_k', 'project', 'R_c_star__ef') ])
-    def k_n_plus__f( second_dr_k, posterior, dims_c_star, R_c_star__ef ):
+        ('second_dr_k', 'none', 'R_c_star__fe'),
+        ('second_dr_k', 'project', 'R_c_star__fe') ])
+    def k_n_plus__f( second_dr_k, posterior, dims_c_star, R_c_star__fe ):
         """ Posterior mode at `theta_n`, in +-space. """
         # retrieve
         k_star__e = posterior.k_star__e
@@ -1994,12 +1994,12 @@ class Solver( AutoCacherAndReloader ):
         elif second_dr_k == 'project':
             return k_star__e[ dims_c_star ]
         else: 
-            return dot( R_c_star__ef.T, k_star__e )
+            return dot( R_c_star__fe, k_star__e )
 
     @cached( cskip = [
-        ('second_dr_k', 'none', 'R_c_star__ef'),
-        ('second_dr_k', 'project', 'R_c_star__ef') ])
-    def X_plus__tf( second_dr_k, posterior, dims_c_star, R_c_star__ef ):
+        ('second_dr_k', 'none', 'R_c_star__fe'),
+        ('second_dr_k', 'project', 'R_c_star__fe') ])
+    def X_plus__tf( second_dr_k, posterior, dims_c_star, R_c_star__fe ):
         """ Regressor matrix in +-space. """
         # retrieve
         X_star__te = posterior.X_star__te
@@ -2009,7 +2009,7 @@ class Solver( AutoCacherAndReloader ):
         elif second_dr_k == 'project':
             return X_star__te[ :, dims_c_star ]
         else: 
-            return dot( X_star__te, R_c_star__ef )
+            return dot( X_star__te, R_c_star__fe.T )
 
     """ Approximate posterior at candidate theta """
 
@@ -2031,9 +2031,9 @@ class Solver( AutoCacherAndReloader ):
                 dot(Lambdainv_n_plus__ff, k_n_plus__f) )
 
     @cached( cskip = [
-        ('second_dr_k', 'none', 'R_c_star__ef'),
-        ('second_dr_k', 'project', 'R_c_star__ef') ])
-    def k_c__d( k_c_plus__f, C_is_diagonal, second_dr_k, R_c_star__ef, 
+        ('second_dr_k', 'none', 'R_c_star__fe'),
+        ('second_dr_k', 'project', 'R_c_star__fe') ])
+    def k_c__d( k_c_plus__f, C_is_diagonal, second_dr_k, R_c_star__fe, 
             dims_c_star, D, posterior ):
         """ Approximate posterior mode at `theta_c`, in full space. """
         # to *-space
@@ -2043,7 +2043,7 @@ class Solver( AutoCacherAndReloader ):
             k_c_star__e = np.zeros( posterior.D_star )
             k_c_star__e[ dims_c_star ] = k_c_plus__f
         else:
-            k_c_star__e = dot( R_c_star__ef.T, k_c_plus__f )
+            k_c_star__e = dot( R_c_star__fe.T, k_c_plus__f )
         # to full space
         if posterior.R_is_identity:
             return k_c_star__e
@@ -2052,7 +2052,7 @@ class Solver( AutoCacherAndReloader ):
             k__d[ posterior.dims ] = k_c_star__e
             return k__d
         else:
-            return dot( posterior.R__de, k_c_star__e )
+            return dot( posterior.R__ed.T, k_c_star__e )
 
     @cached
     def z_c__t( X_plus__tf, k_c_plus__f ):
@@ -2114,10 +2114,10 @@ class Solver( AutoCacherAndReloader ):
         return -local_evidence
 
     @cached( cskip=[ 
-        ('C_is_diagonal', True, ['R_c_star__ef', 'dC_dtheta__idd']),
+        ('C_is_diagonal', True, ['R_c_star__fe', 'dC_dtheta__idd']),
         ('C_is_diagonal', False, ['dl_dtheta__id']) ])
     def LE_jacobian( C_is_diagonal, second_dr_k, 
-            posterior, dC_dtheta__idd, dl_dtheta__id, R_c_star__ef, data, 
+            posterior, dC_dtheta__idd, dl_dtheta__id, R_c_star__fe, data, 
             mu_c__t, X_plus__tf, slice_by_training, C_c_plus__ff, E_n_plus__ff,
             Lambda_c_plus__ff, Cinv_c_plus__ff, k_c_plus__f, dims_c_star,
             l_c_plus__f, N_theta, Lambdainv_c_plus__ff, ez_c__t,
@@ -2177,11 +2177,11 @@ class Solver( AutoCacherAndReloader ):
                 dC_dtheta_star__iee = dC_dtheta__idd
             else:
                 dC_dtheta_star__iee = [ 
-                        mdot( posterior.R__de.T, dC__dd, posterior.R__de ) 
+                        mdot( posterior.R__ed, dC__dd, posterior.R__ed.T ) 
                         for dC__dd in dC_dtheta__idd ]
             # project to +-space
             dC_dtheta_plus__iff = [ 
-                    mdot( R_c_star__ef.T, dC__ee, R_c_star__ef ) 
+                    mdot( R_c_star__fe, dC__ee, R_c_star__fe.T ) 
                     for dC__ee in dC_dtheta_star__iee ]
 
             # residuals at candidate solution
@@ -2248,8 +2248,8 @@ class Diagonal_Prior( Prior ):
         raise TypeError('cannot compute `C_eig`: diagonal covariance matrix')
 
     @cached
-    def R__de():
-        raise TypeError('cannot compute `R__de`: diagonal covariance matrix')
+    def R__ed():
+        raise TypeError('cannot compute `R__ed`: diagonal covariance matrix')
 
 
 class ML( Diagonal_Prior ):
