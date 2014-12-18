@@ -1558,7 +1558,7 @@ class Solver( AutoCacherAndReloader ):
             elif self.C_is_diagonal:
                 return k__d[ self.dims ]
             else:
-                return dot( self.R__de, k__d )
+                return dot( self.R__de.T, k__d )
 
     """
     ====================
