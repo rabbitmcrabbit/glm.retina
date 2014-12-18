@@ -2312,3 +2312,4 @@ class Ridge( Diagonal_Prior ):
         """ Derivative of the diagonal prior covariance matrix. """
         return [ -l__d ]
 
+

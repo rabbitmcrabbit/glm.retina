@@ -46,7 +46,7 @@ class SimulatedData( glm.Data ):
         if nonlinearity == 'exp':
             mu = exp( z )
         elif nonlinearity == 'soft':
-            mu = log( 1 + exp(z) )
+            mu = log( 1 + exp(z) ) / log(2)
         else:
             raise ValueError( 'unknown nonlinearity: %s' % nonlinearity )
         y = poisson( mu )

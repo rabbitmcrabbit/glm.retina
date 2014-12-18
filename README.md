@@ -55,3 +55,10 @@ Dimensionality reduction
 - Here, we use a matrix `R__de` to make this combined rotation/projection
 - The dimension-reduced space we denote '*-space', and we use the suffix `__e` rather than `__d`
 - A second dimensionality reduction is sometimes needed; we called this '+-space', and we use the suffix `__f`
+
+
+
+Solvers
+-------
+
+Finding the receptive field is a straightforward process -- it involves constructing and solving a likelihood-based objective function. The spikes are observed 
