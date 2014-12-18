@@ -448,9 +448,32 @@ class Solver( AutoCacherAndReloader ):
         p.is_point_estimate = True
 
     """
-    =========================
-    Methods for optimisation
-    =========================
+    =============
+    Optimisation
+    =============
+
+    Optimisation involves calculating the posterior distribution on `k` given 
+    the data and the hyperparameters (`theta`):
+
+        P( k | data, theta )
+
+    Here, we use a Laplace approximation. First, we solve for the posterior 
+    mode (stored in `v` / `k_star` / `k`). Then we approximate the posterior 
+    covariance from the curvature of the log likelihood around the mode (stored 
+    in `Lambda`).
+
+    When the posterior is calculated, it is saved in `self.posterior`. This 
+    attribute is an object of the same class as `self`, but has a flag
+    `is_posterior` set to True. Also the cache of the posterior object is 
+    immutable, to prevent accidental changes.
+
+    There is also the question of how to choose the hyperparameters, `theta`. 
+    This is determined by calculating the marginal likelihood (i.e. the 
+    evidence) of the data given `theta`, and then optimising this value for 
+    `theta`. This is done in two stages: first a coarse grid search, then a 
+    gradient ascent. For the best value of `theta`, the posterior is retained
+    as `self.posterior`.
+
     """
 
     def solve( self, grid_search_theta=True, verbose=1, **kw ):
@@ -465,6 +488,9 @@ class Solver( AutoCacherAndReloader ):
         current value of `theta`. 
         
         Keywords:
+
+        - `grid_search_theta` : boolean (True). Run a grid search on `theta`
+        first.
 
         Verbosity levels:
 
@@ -495,29 +521,6 @@ class Solver( AutoCacherAndReloader ):
     ------------------
     Posterior objects 
     ------------------
-
-    Optimisation involves calculating the posterior distribution on `k` given 
-    the data and the hyperparameters:
-
-        P( k | data, theta )
-
-    This is approximated by solving for the posterior mode (stored in
-    `v` / `k_star` / `k`), and by taking a Laplace estimate (stored in
-    `Lambda` and its variants).
-
-    When the posterior is calculated, it is saved in `self.posterior`. This 
-    attribute is an object of the same class as `self`, but has a flag
-    `is_posterior` set to True. Also the cache of the posterior object is 
-    immutable, to prevent accidental changes.
-
-    There is also the question of how to choose `theta`. This is determined
-    by calculating the marginal likelihood (i.e. the evidence) of the
-    data given `theta`, and then optimised for `theta` via coarse grid 
-    search and gradient ascent.
-
-    For each value of `theta`, a posterior is calculated and temporarily
-    stored as `self.posterior`. 
-
     """
 
     # by default, `self` is not a posterior, unless specified otherwise
@@ -556,6 +559,7 @@ class Solver( AutoCacherAndReloader ):
 
     @property
     def data( self ):
+        """ Retain a single shared copy of the data object. """
         if hasattr( self, '_data' ):
             return self._data
         else:
