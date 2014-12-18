@@ -154,9 +154,9 @@ class Data( AutoReloader ):
 
 
 """
-===============
-Solver classes
-===============
+=============
+Solver class
+=============
 """
 
 class Solver( AutoCacherAndReloader ):
@@ -165,7 +165,7 @@ class Solver( AutoCacherAndReloader ):
 
     This should be subclassed to define certain structural priors over
     the variables.
-    
+
     """
 
     """ 
@@ -184,55 +184,56 @@ class Solver( AutoCacherAndReloader ):
     ---------------
     """
 
-    def __init__( self, data, initial_conditions=None, 
-            testing_proportion=0, testing_block_size_smp=10,
-            solve=False, announcer=None, verbose=True, verbose_cache=False, 
-            empty_copy=False, nonlinearity='exp', **kw ):
+    def __init__( self, data, solve=False, nonlinearity='exp',
+            testing_proportion=0, initial_conditions=None, 
+            announcer=None, verbose=True, empty_copy=False, **kw ):
         """ Create a Solver object, for given data object, `data`.
         
         Keywords:
 
-        - `initial_conditions`: Solver object, providing initial conditions
-
-        - `solve`: solve by default
-
-        - `testing_proportion` : what fraction of the data should be set aside
-            for cross-validation (between 0 and 1)
-
-        - `testing_block_size_smp` : max size of the contiguous blocks in
-            the testing data set. 
+        - `solve`: whether to immediate solve (default: False)
 
         - `nonlinearity` : the output nonlinearity. Either 'exp' or 'soft'.
             * 'exp'  :  mu__t = exp( z__t )
             * 'soft' :  mu__t = log_2( 1 + exp( z__t ) )
+
+        - `testing_proportion` : what fraction of the data should be set aside
+            for cross-validation (between 0 and 1)
+
+        - `initial_conditions`: initial values for parameters and/or 
+            hyperparameters. Can be a dict or a Solver object.
+
 
         Verbosity:
 
         - `announcer` : provide Announcer object (constructed if not provided)
         - `verbose` : whether there are verbose announcements
 
+
+        Other:
+
+        - `empty_copy` : internal use. Helper for creating posterior objects.
+
         """
-        # create announcer
+        # create announcer object. This outputs solving progress to the screen.
         if announcer is None:
             announcer = Announcer( verbose=verbose )
-        if not verbose_cache and not empty_copy:
             announcer.suppress('cache')
         self._announcer = announcer
-        # empty copy?
+        # empty copy? (for posterior)
         if empty_copy:
             return
         # save data
         self._data = data
         # define training and testing regions of the data
         self.define_training_and_testing_regions( 
-                testing_proportion=testing_proportion,
-                testing_block_size_smp=testing_block_size_smp )
+                testing_proportion=testing_proportion, **kw )
         # nonlinearity
         if nonlinearity in ['exp', 'soft']:
             self.nonlinearity = nonlinearity
         else:
             raise ValueError("`nonlinearity` must be 'exp' or 'soft'")
-        # initial conditions
+        # parse initial conditions
         self.parse_initial_conditions( initial_conditions )
         self.reset()
         # solve, if requested
@@ -248,6 +249,7 @@ class Solver( AutoCacherAndReloader ):
 
     @property
     def N_observations( self ):
+        """ How many observed data points in the training set. """
         return self.T_training
 
     @cached
@@ -842,7 +844,7 @@ class Solver( AutoCacherAndReloader ):
     """
     
     def define_training_and_testing_regions( 
-            self, testing_proportion, testing_block_size_smp ):
+            self, testing_proportion, testing_block_size_smp=100, **kw ):
         """ Partitions the data for cross-validation. 
         
         Arguments:
@@ -850,7 +852,7 @@ class Solver( AutoCacherAndReloader ):
         - `testing_proportion` : how much of the data to put aside for
             testing purposes. Should be between 0 and 0.4 (recommended: 0.2)
 
-        - `testing_block_size_smp` : max size of the contiguous blocks in
+        - `testing_block_size_smp` : max duration of the contiguous blocks in
             the testing data set. 
         
         """
@@ -938,14 +940,17 @@ class Solver( AutoCacherAndReloader ):
 
     @cached
     def has_testing_regions( testing_slices ):
+        """ Returns True if there are testing regions. """
         return len( testing_slices ) > 0
 
     @cached
     def T_training( training_slices ):
+        """ Number of training data points. """
         return int(sum([ s.stop - s.start for s in training_slices ]))
 
     @cached
     def T_testing( testing_slices ):
+        """ Number of testing data points. """
         return int(sum([ s.stop - s.start for s in testing_slices ]))
 
     def slice_by_training( self, sig ):
@@ -987,20 +992,24 @@ class Solver( AutoCacherAndReloader ):
 
     @cached
     def y_testing__t( data, slice_by_testing ):
+        """ Spike counts for the testing dataset. """
         return slice_by_testing( data.y__t )
 
     @cached
     def LL_testing( slice_by_testing, mu__t, log_mu__t, y_testing__t ):
+        """ Log likelihood on the testing dataset. """
         mu__t = slice_by_testing(mu__t)
         log_mu__t = slice_by_testing(log_mu__t)
         return -np.sum( mu__t ) + dot( y_testing__t, log_mu__t )
 
     @cached
     def LL_training_per_observation( LL_training, T_training ):
+        """ Log likelihood per observation on the training dataset. """
         return LL_training / T_training
 
     @cached
     def LL_testing_per_observation( LL_testing, T_testing ):
+        """ Log likelihood per observation on the testing dataset. """
         return LL_testing / T_testing
 
     """
@@ -1631,8 +1640,8 @@ class Solver( AutoCacherAndReloader ):
     =============================
 
     A Laplace approximation is taken for the posterior. This is initially
-    expressed in reduced-coordinate space as 
-        `Normal( k_star__e, Lambda_star__ee__ee )`,
+    expressed in reduced-coordinate space (*-space) as 
+        `Normal( k_star__e, Lambda_star__ee )`,
     and can be expanded to 
         `Normal( k__d, Lambda__dd )`. 
     Here, `Lambda__dd` is the posterior covariance.
@@ -2190,5 +2199,6 @@ class Ridge( Diagonal_Prior ):
 
     @cached
     def dl_dtheta__id( l__d ):
+        """ Derivative of the diagonal prior covariance matrix. """
         return [ -l__d ]
 
