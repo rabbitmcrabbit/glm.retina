@@ -664,64 +664,6 @@ class Solver( AutoCacherAndReloader ):
     Solving for `theta`
     -------------------
     """
-    
-    def get_next_theta_n( self, factr=1e10, ftol_per_obs=None ):
-        """ Single step for local evidence approx algorithm.
-
-        In the Park & Pillow (2012) approximation, one walks towards an
-        optimal `theta` by approximating the objective function near
-        `theta_n` as `psi(theta)`, then maximise this approx objective
-        function. The solution becomes the next `theta_n`. This method
-        performs one step in this optimisation procedure, finding, in effect
-        `theta_(n+1)` from `theta_(n)`.
-
-        Keywords:
-
-        - `factr` : convergence factor for 'grad'-based optimisation
-
-        """
-        # parse tolerance
-        if ftol_per_obs is None:
-            ftol_per_obs = self.ftol_per_obs
-        ftol = ftol_per_obs * self.N_observations
-        # functions to minimise
-        # (these are interface functions to the cacher)
-        f = self.cfunction( np.array_equal, 'LE_objective', 'theta' )
-        df = self.cfunction( np.array_equal, 'LE_jacobian', 'theta' )
-        # a copy is necessary as fmin_l_bfgs_b makes changes in place
-        g = lambda x: f( x.copy() )
-        dg = lambda x: df( x.copy() )
-        # reporting during each step
-        def callback( theta, assess_convergence=True ):
-            # set the current value of `theta` (if required)
-            self.csetattr( 'theta', theta )
-            # have we converged
-            last_LE = self._last_LE
-            this_LE = getattr( self, 'LE_objective' )
-            improvement = -(this_LE - last_LE)
-            # if we have converged, break out of the loop
-            if assess_convergence and (improvement < ftol):
-                raise ConvergedUpToFtol()
-            self._last_LE = this_LE
-        # initial condition
-        theta0 = np.array( self.posterior.theta )
-        # boundary conditions
-        bounds = self.bounds_theta
-        self._last_LE = g( theta0 ) #np.inf
-        # run
-        try:
-            theta = fmin_l_bfgs_b( 
-                    g, theta0, fprime=dg, approx_grad=False, bounds=bounds, 
-                    factr=factr, disp=False, callback=callback )[0]
-        except ConvergedUpToFtol:
-            theta = self.theta
-        # save
-        g(theta)
-
-    @property
-    def grid_search_theta_available( self ):
-        """ Can we grid search to find `theta`. """
-        return hasattr( self, 'grid_search_theta_parameters' )
 
     def solve_theta( self, grid_search=False, ftol_per_obs=None, 
             max_iterations=10, verbose=1, **kw ):
@@ -863,12 +805,82 @@ class Solver( AutoCacherAndReloader ):
         # restore verbosity
         self._announcer.thresh_allow( 
                 verbose, -np.inf, 'solve_theta', 'calc_posterior' )
+    
+    def get_next_theta_n( self, factr=1e10, ftol_per_obs=None ):
+        """ Single step for local evidence approx algorithm.
 
+        In the Park & Pillow (2012) approximation, one walks towards an
+        optimal `theta` by approximating the objective function near
+        `theta_n` as `psi(theta)`, then maximise this approx objective
+        function. The solution becomes the next `theta_n`. This method
+        performs one step in this optimisation procedure, finding, in effect
+        `theta_(n+1)` from `theta_(n)`.
+
+        Keywords:
+
+        - `factr` : convergence factor for 'grad'-based optimisation
+
+        """
+        # parse tolerance
+        if ftol_per_obs is None:
+            ftol_per_obs = self.ftol_per_obs
+        ftol = ftol_per_obs * self.N_observations
+        # functions to minimise
+        # (these are interface functions to the cacher)
+        f = self.cfunction( np.array_equal, 'LE_objective', 'theta' )
+        df = self.cfunction( np.array_equal, 'LE_jacobian', 'theta' )
+        # a copy is necessary as fmin_l_bfgs_b makes changes in place
+        g = lambda x: f( x.copy() )
+        dg = lambda x: df( x.copy() )
+        # reporting during each step
+        def callback( theta, assess_convergence=True ):
+            # set the current value of `theta` (if required)
+            self.csetattr( 'theta', theta )
+            # have we converged
+            last_LE = self._last_LE
+            this_LE = getattr( self, 'LE_objective' )
+            improvement = -(this_LE - last_LE)
+            # if we have converged, break out of the loop
+            if assess_convergence and (improvement < ftol):
+                raise ConvergedUpToFtol()
+            self._last_LE = this_LE
+        # initial condition
+        theta0 = np.array( self.posterior.theta )
+        # boundary conditions
+        bounds = self.bounds_theta
+        self._last_LE = g( theta0 ) #np.inf
+        # run
+        try:
+            theta = fmin_l_bfgs_b( 
+                    g, theta0, fprime=dg, approx_grad=False, bounds=bounds, 
+                    factr=factr, disp=False, callback=callback )[0]
+        except ConvergedUpToFtol:
+            theta = self.theta
+        # save
+        g(theta)
+
+    @property
+    def grid_search_theta_available( self ):
+        """ Can we grid search to find `theta`. """
+        return hasattr( self, 'grid_search_theta_parameters' )
 
     """
     ================
     Cross-validation
     ================
+
+    This section contains methods for cross-validating. 
+    
+    At initialisation, the data are split up into training and testing 
+    datasets. These are currently implemented as slices: e.g., for a 100 sec
+    recording, the training dataset comprises the contiguous regions from 
+    0-8, 10-18, 20-28 secs, ... while the testing dataset comprises the
+    remaining contiguous regions from 8-10, 18-20, 28-30 secs, ... This is
+    just an implementation detail at present, and can be changed so long as
+    the methods `has_testing_regions`, `T_training`, `T_testing`, 
+    `slice_by_training`, `slice_by_testing`, `zero_during_testing` are
+    replaced.
+
     """
     
     def define_training_and_testing_regions( 
@@ -881,7 +893,7 @@ class Solver( AutoCacherAndReloader ):
             testing purposes. Should be between 0 and 0.4 (recommended: 0.2)
 
         - `testing_block_size_smp` : max duration of the contiguous blocks in
-            the testing data set. 
+            the testing data set. This is defined in samples.
         
         """
         # what to do if no cross-validation
@@ -982,7 +994,11 @@ class Solver( AutoCacherAndReloader ):
         return int(sum([ s.stop - s.start for s in testing_slices ]))
 
     def slice_by_training( self, sig ):
-        """ Retrieves the training slices of a signal. """
+        """ Retrieves the training slices of a signal. 
+        
+        It is assumed that the 0th dimension in the signal is time.
+        
+        """
         if not self.has_testing_regions:
             return sig
         new_shape = A(sig.shape)
@@ -996,7 +1012,11 @@ class Solver( AutoCacherAndReloader ):
         return new_sig
 
     def slice_by_testing( self, sig ):
-        """ Retrieves the testing slices of a signal. """
+        """ Retrieves the testing slices of a signal. 
+        
+        It is assumed that the 0th dimension in the signal is time.
+
+        """
         if not self.has_testing_regions:
             return A([])
         new_shape = A(sig.shape)
@@ -1010,7 +1030,11 @@ class Solver( AutoCacherAndReloader ):
         return new_sig
 
     def zero_during_testing( self, sig ):
-        """ Sets the signal components during testing regions to be zero. """
+        """ Sets the signal components during testing regions to be zero. 
+        
+        It is assumed that the 0th dimension in the signal is time.
+        
+        """
         if not self.has_testing_regions:
             return sig
         sig = sig.copy()
