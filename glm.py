@@ -1830,34 +1830,43 @@ class Solver( AutoCacherAndReloader ):
     Local evidence
     ===============
 
-    The (log) evidence is expensive to compute -- it depends on calculating
-    the posterior. The approximation is therefore to calculate the posterior
-    at a fixed value of `theta`, denoted `theta_n`, and then consider values
-    of `theta` nearby. These candidate solutions are calculated as `theta_c`. 
-    There is an function which can then be used to estimate the evidence 
-    at `theta_c` (which can then be maximised as a function of `theta_c`).
+    The evidence is expensive to compute -- it depends on calculating
+    the posterior. We therefore rely on an approximation. We calculate the 
+    posterior at a fixed value of `theta`, denoted `theta_n`, and then consider 
+    values of `theta` nearby. These candidate solutions are referred to as 
+    `theta_c`. By a closed-form approximation of the evidence at `theta_c` near 
+    to `theta_n`, we can maximise this 'local evidence' as a function of
+    `theta_c`.
 
     To implement this, we calculate a posterior at `theta_n`, and carry this
-    forward as the `posterior` argument to the attributes below. 
+    forward as the `posterior` argument to the attributes below.  Thus 
+    `theta_n` can be accessed as `self.posterior.theta`. The candidate values 
+    of `theta_c` are then explored in the main Solver object. Thus `theta_c` 
+    can be accessed as `self.theta`. 
 
-    Note that `star` here refers to the dim reduction induced 
-    by `theta_n`, not `theta_c`. This means that a second dimensionality
-    reduction is sometimes necessary. For convention, *-space means the 
-    space induced by `theta_n`, and +-space means the space induced by
-    both `theta_n` and `theta_c`.
+    This procedure also introduces a *second* dimensionality reduction on `k`.
+    For `theta = theta_n`, some eigenvalues of the prior covariance on `k` are
+    very small, so we project the corresponding eigenvectors out. When we move 
+    to `theta_c`, there may still be very small eigenvectors remaining, that
+    require a second rotation/projection. 
+
+    By convention, `star` and *-space refer to the dim reduction induced by 
+    `theta_n`, not `theta_c`. Further, `plus` and +-space refer to the
+    dim reduction induced by both `theta_n` and `theta_c`.
 
     """
 
     @cached
     def C_c_star__ee( posterior, C__dd ):
-        """ Covariance at theta_c, in *-space induced by theta_n. """
+        """ Covariance at theta_c, in *-space. """
         # if theta_n has no dim reduction
         if posterior.R_is_identity:
             return C__dd
         # otherwise project
         else:
-            return mdot( posterior.R__de, C, posterior.R__de.T )
+            return mdot( posterior.R__de.T, C__dd, posterior.R__de )
         # TO DO: if posterior.C_is_diagonal
+        # (shortcuts available here to save time)
 
     @cached
     def C_c_eig( C_c_star__ee ):
@@ -2207,8 +2216,6 @@ class Solver( AutoCacherAndReloader ):
                     0.5 * dot( kT_En_minus_Cinv__f, Bk__f ) ])
             # make negative
             return -dpsi__i
-
-
 
 
 
