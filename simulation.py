@@ -110,10 +110,10 @@ class SimulatedDataHistory( SimulatedData ):
             if t == 0:
                 mu_history = 1.
             elif t <= self.D_history:
-                prev_spikes = y[ : t-1 ]
-                mu_history = exp( dot( prev_spikes, k_history[ : t-1 ] ) )
+                prev_spikes = y[ : t ]
+                mu_history = exp( dot( prev_spikes, k_history[ -t: ] ) )
             else:
-                prev_spikes = y[ t - self.D_history - 1 : t - 1 ][::-1]
+                prev_spikes = y[ t - self.D_history : t ]
                 mu_history = exp(dot( prev_spikes, k_history ))
             y[t] = poisson( mu[t] * mu_history )
         # construct X_history
@@ -127,7 +127,9 @@ class SimulatedDataHistory( SimulatedData ):
     def make_k_history_true( self ):
         """ Generate history kernel for stimulation. """
         tt = np.arange(40.)
-        k_history = -( np.sin(2 * np.pi * tt / (6 * np.sqrt(tt + 1))) * np.exp(-0.5 * (tt/12.)**2 ) ) * 0.01
+        k_history = -( np.sin(2 * np.pi * tt / (6 * np.sqrt(tt + 1))) 
+                * np.exp(-0.5 * (tt/12.)**2 ) ) * 0.01
+        k_history = k_history[::-1]
         return k_history
 
 
