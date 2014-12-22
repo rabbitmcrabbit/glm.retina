@@ -87,17 +87,24 @@ class Data( AutoReloader ):
 
 
 """
-=============
-Solver class
-=============
+===============
+Solver classes
+===============
 """
 
-class Solver( AutoCacherAndReloader ):
+class SolverFixedTheta( AutoCacherAndReloader ):
 
     """ Superclass for GLM solvers.
 
     This should be subclassed to define certain structural priors over
     the variables.
+
+    Note that SolverFixedTheta does not provide the means for solving for the 
+    hyperparameters `theta`. These are *fixed*, and have to be specified
+    in advance. Any inference over `theta` needs to be performed using the 
+    Solver class.
+
+    This is separated for the purposes of clarity.
 
     """
 
@@ -204,7 +211,7 @@ class Solver( AutoCacherAndReloader ):
 
     def __getstate__( self ):
         """ For pickling, remove `data` and some baggage. """
-        d = super( Solver, self ).__getstate__()
+        d = super( SolverFixedTheta, self ).__getstate__()
         # re-add the settable cache attributes
         for k in self._cache.keys():
             if getattr( self.__class__, k ).settable:
@@ -219,6 +226,7 @@ class Solver( AutoCacherAndReloader ):
         return d
 
     def __setstate__( self, d ):
+        """ For unpickling, recreate weak proxies. """
         # create weak references
         for k in [k for k in d.keys() if k.startswith('posterior_')]:
             d[k].parent = weakref.proxy( self )
@@ -388,11 +396,12 @@ class Solver( AutoCacherAndReloader ):
     immutable, to prevent accidental changes.
 
     There is also the question of how to choose the hyperparameters, `theta`. 
-    This is determined by calculating the marginal likelihood (i.e. the 
-    evidence) of the data given `theta`, and then optimising this value for 
-    `theta`. This is done in two stages: first a coarse grid search, then a 
-    gradient ascent. For the best value of `theta`, the posterior is retained
-    as `self.posterior`.
+    In the SimpleSolver class, `theta` has to be set on initialisation. In
+    the Solver class, `theta` is learned by calculating the marginal likelihood 
+    (i.e. the evidence) of the data given `theta`, and then optimising this 
+    value for `theta`. This is done in two stages: first a coarse grid search, 
+    then a gradient ascent. For the best value of `theta`, the posterior is 
+    retained as `self.posterior`.
 
     """
 
@@ -492,7 +501,7 @@ class Solver( AutoCacherAndReloader ):
                 if self._cache.has_key( d ):
                     raise TypeError('cannot change the cache of a posterior')
         else:
-            return super( Solver, self )._clear_descendants( name )
+            return super( SolverFixedTheta, self )._clear_descendants( name )
 
     """
     --------------------------------------
@@ -579,210 +588,8 @@ class Solver( AutoCacherAndReloader ):
         # again, ensure that this posterior is set to the posterior mode
         p.csetattr( 'v', v_hat )
 
-    """
-    ----------------------------------------------
-    Solving for the hyperparameter vector, `theta`
-    ----------------------------------------------
-    """
-
-    def solve_theta( self, grid_search=False, ftol_per_obs=None, 
-            max_iterations=10, verbose=1, **kw ):
-        """ Optimise for `theta` by maximum marginal likelihood. 
-        
-        Convergence is measured by `ftol_per_obs`. This is multiplied by
-        `self.N_observations` to give a step improvement criterion for 
-        continuing the optimisation. This defaults to `self.ftol_per_obs`
-        if not provided.
-        
-        """
-        # parse tolerance
-        if ftol_per_obs is None:
-            ftol_per_obs = self.ftol_per_obs
-        # do we actually have a theta to solve
-        if self.N_theta == 0:
-            return
-        # parse verbosity
-        self._announcer.thresh_allow( verbose, 1, 'solve_theta' )
-        self._announcer.thresh_allow( verbose, 2, 'calc_posterior' )
-        # initialise
-        self.initialise_theta()
-        best_evidence = -np.inf
-        best_posterior = None
-        # calculate posterior
-        self.calc_posterior( verbose=None, **kw )
-        # current value
-        if hasattr(self, 'posterior' ):
-            try:
-                best_posterior = self.posterior
-                best_evidence = self.posterior.evidence
-                announce_str = 'evidence existing:     %.3f' % best_evidence
-                self.announce( announce_str, prefix='solve_theta' )
-            except (AttributeError, np.linalg.LinAlgError):
-                pass
-        # check that we can actually grid search
-        grid_search = ( grid_search and self.grid_search_theta_available )
-
-        # case 1: set initial conditions by grid search
-        if grid_search:
-            # announce
-            self.announce( 'theta grid search starting', prefix='solve_theta' )
-            # construct grid searching object, `gs`
-            grid_kws = self.grid_search_theta_parameters.copy()
-            grid_kws.update( **kw )
-            gs = GridSearcher( **grid_kws )
-            # run through the grid search
-            while not gs.is_finished:
-                # current `theta` value
-                theta = gs.current_theta
-                self.theta = theta
-                # set the initial value of `v`
-                if best_posterior is not None:
-                    self.v = self.reproject_to_v( posterior=best_posterior )
-                # calculate posterior on `v` for this `theta`
-                self.calc_posterior( verbose=None, **kw )
-                p = self.posterior
-                # evaluate the evidence for this `theta`
-                this_evidence = self.posterior.evidence
-                # prepare announcement
-                announce_str = 'grid search [%d/%d]: ('
-                announce_str = announce_str % (gs.current_count, gs.max_count)
-                announce_str += ('%d,' * len(theta))
-                announce_str = announce_str[:-1] + ')'
-                announce_str = announce_str % tuple(theta)
-                max_len = 30 + 2*len(theta)
-                if len(announce_str) < max_len:
-                    announce_str += ' '*(max_len - len(announce_str))
-                announce_str += ('= %.1f' % this_evidence)
-                # if the evidence is better, keep
-                if this_evidence > best_evidence:
-                    best_posterior = p
-                    best_evidence = this_evidence
-                    announce_str += '    *'
-                # announce
-                self.announce( announce_str, prefix='solve_theta' )
-                # continue
-                gs.next( this_evidence )
-            # we are finished grid search
-            self.announce( 'theta grid search finished', prefix='solve_theta' )
-
-        # case 2: initial condition is current `theta`
-        elif ( hasattr( self, 'posterior' ) and 
-                np.array_equal( self.posterior.theta, self.theta ) ):
-            pass
-
-        # case 3: calculate
-        else:
-            self.calc_posterior( verbose=None, **kw )
-            best_posterior = self.posterior
-            best_evidence = best_posterior.evidence
-                
-        # announce the evidence
-        announce_str = 'evidence initial:     %.3f' % best_evidence
-        self.announce( announce_str, prefix='solve_theta' )
-        # save the posterior
-        self.posterior = best_posterior
-
-        # solve: cycle of maximising local LE
-        for i in range( max_iterations ):
-            # optimise local evidence
-            self.get_next_theta_n()
-            new_theta = self.theta
-            # check that theta has changed
-            old_theta = self.posterior.theta
-            if np.array_equal( new_theta, old_theta ):
-                break
-            # calculate posterior here
-            self.calc_posterior( verbose=None, **kw )
-            # evaluate evidence here
-            new_posterior = self.posterior
-            new_evidence = self.posterior.evidence
-            # report progress
-            announce_str = 'evidence iteration %d: %.3f' % ( i, new_evidence )
-            self.announce( announce_str, prefix='solve_theta' )
-            # if we have made an improvement, keep it
-            evidence_improvement = new_evidence - best_evidence
-            if evidence_improvement > 0:
-                best_posterior = new_posterior
-                best_evidence = new_evidence
-            # if the improvement has been negative, restore, then end
-            if evidence_improvement < 0:
-                self.posterior = best_posterior
-                new_theta = best_posterior.theta
-                new_v = best_posterior.v
-                self.csetattr( 'theta', new_theta )
-                self.csetattr( 'v', new_v )
-                break
-            # if the improvement has been too small, end here
-            if evidence_improvement < (ftol_per_obs * self.N_observations):
-                self.posterior = best_posterior
-                break
-
-        # announce the evidence
-        announce_str = 'evidence final:       %.3f' % best_evidence
-        self.announce( announce_str, prefix='solve_theta' )
-        if best_evidence < -1e10:
-            tracer()
-        # restore verbosity
-        self._announcer.thresh_allow( 
-                verbose, -np.inf, 'solve_theta', 'calc_posterior' )
-    
-    def get_next_theta_n( self, factr=1e10, ftol_per_obs=None ):
-        """ Single step for local evidence approx algorithm.
-
-        In the Park & Pillow (2012) approximation, one walks towards an
-        optimal `theta` by approximating the objective function near
-        `theta_n` as `psi(theta)`, then maximise this approx objective
-        function. The solution becomes the next `theta_n`. This method
-        performs one step in this optimisation procedure, finding, in effect
-        `theta_(n+1)` from `theta_(n)`.
-
-        Keywords:
-
-        - `factr` : convergence factor for 'grad'-based optimisation
-
-        """
-        # parse tolerance
-        if ftol_per_obs is None:
-            ftol_per_obs = self.ftol_per_obs
-        ftol = ftol_per_obs * self.N_observations
-        # functions to minimise
-        # (these are interface functions to the cacher)
-        f = self.cfunction( np.array_equal, 'LE_objective', 'theta' )
-        df = self.cfunction( np.array_equal, 'LE_jacobian', 'theta' )
-        # a copy is necessary as fmin_l_bfgs_b makes changes in place
-        g = lambda x: f( x.copy() )
-        dg = lambda x: df( x.copy() )
-        # reporting during each step
-        def callback( theta, assess_convergence=True ):
-            # set the current value of `theta` (if required)
-            self.csetattr( 'theta', theta )
-            # have we converged
-            last_LE = self._last_LE
-            this_LE = getattr( self, 'LE_objective' )
-            improvement = -(this_LE - last_LE)
-            # if we have converged, break out of the loop
-            if assess_convergence and (improvement < ftol):
-                raise ConvergedUpToFtol()
-            self._last_LE = this_LE
-        # initial condition
-        theta0 = np.array( self.posterior.theta )
-        # boundary conditions
-        bounds = self.bounds_theta
-        self._last_LE = g( theta0 ) #np.inf
-        # run
-        try:
-            theta = fmin_l_bfgs_b( 
-                    g, theta0, fprime=dg, approx_grad=False, bounds=bounds, 
-                    factr=factr, disp=False, callback=callback )[0]
-        except ConvergedUpToFtol:
-            theta = self.theta
-        # save
-        g(theta)
-
-    @property
-    def grid_search_theta_available( self ):
-        """ Can we grid search to find `theta`. """
-        return hasattr( self, 'grid_search_theta_parameters' )
+    def solve_theta( self, *a, **kw ):
+        return
 
     """
     ================
@@ -1087,206 +894,6 @@ class Solver( AutoCacherAndReloader ):
         if debug:
             tracer()
 
-    def check_LE_derivatives( self, eps=1e-6, debug=False, 
-            error_if_fail=False, error_threshold=0.05, **kw ):
-        """ Check derivatives of the local evidence wrt `theta`.
-        
-        For the Jacobian, evaluates the analytic derivatives provided by
-        the attribute `LE_jacobian` and compares these with the empirical
-        values, obtained from finite differences method on `LE_objective`.
-
-        Typically, this prints out the size of the error between analytic (aJ)
-        and empirical estimates (eJ), as a norm. In particular, this computes 
-        norm(aJ - eJ) / norm(aJ). If required, a ValueError can be thrown
-        if the deviation is too large.
-
-        Keywords:
-
-        - `eps` : absolute size of step in finite difference method
-
-        - `debug` : drop into IPython debugger after evaluation
-
-        - `error_if_fail` : raise ValueError if the relative deviation
-            is too large
-
-        - `error_threshold` : if `error_if_fail`, only raise ValueError
-            if the relative deviation is greater than this value.
-        
-        """
-        N_theta = self.N_theta
-        # evaluate analytic
-        LE = self.LE_objective
-        a = dLE = self.LE_jacobian
-        # evaluate empirical
-        theta0 = np.array( self.theta ).astype(float)
-        e = edLE = np.zeros( N_theta )
-        for i in range( N_theta ):
-            theta = theta0.copy()
-            theta[i] += eps
-            self.theta = theta
-            edLE[i] = ( self.LE_objective - LE) / eps
-        # check Jacobian
-        a[ np.abs(a) < 1e-20 ] = 1e-20
-        e[ np.abs(e) < 1e-20 ] = 1e-20
-        err1 = np.nanmax( np.abs( (a-e)/e ) )
-        err2 = norm( a - e ) / norm( e )
-        print 'LE_jacobian : '
-        print ' '
-        print '   max deviation : %.6f ' % err1
-        print '   norm deviation : %.6f ' % err2
-        print ' '
-        sys.stdout.flush()
-        # raise error?
-        if error_if_fail and (err2 > error_threshold):
-            raise ValueError('Jacobian of LE failed at %.6f' % err2 )
-        # debug
-        if debug:
-            tracer()
-
-    def check_l_derivatives( self, eps=1e-6, debug=False,
-            error_if_fail=False, error_threshold=0.05, hessian=False ):
-        """ Check derivatives of diagonal of prior covariance wrt `theta`. 
-        
-        For both the Jacobian and Hessian, evaluates the analytic derivatives
-        provided by the respective attributes `dl_dtheta__id` and 
-        `d2l_dtheta2__iid`, and compares with empirical values, obtained from 
-        finite differences method on `l__d` and `dl_dtheta__id` respectively.
-        
-        Typically, this prints out the size of the error between analytic
-        and empirical estimates, as a norm. For example, for the Jacobian 
-        (analytic `aJ` and empirical `eJ` respectively), this computes 
-        norm(aJ - eJ) / norm(aJ). If required, a ValueError can be thrown
-        if the deviation is too large.
-
-        This tests the derivatives at the current value of `theta`.
-
-        Keywords:
-
-        - `eps` : absolute size of step in finite difference method
-
-        - `debug` : drop into IPython debugger after evaluation
-
-        - `error_if_fail` : raise ValueError if the relative deviation
-            is too large
-
-        - `error_threshold` : if `error_if_fail`, only raise ValueError
-            if the relative deviation is greater than this value.
-
-        - `hessian` : boolean. whether to check hessian
-
-        NOTE: Hessian testing not currently implemented.
-
-        """
-        # can only run this if C is diagonal
-        if not self.C_is_diagonal:
-            raise TypeError('`C` is not diagonal: check `l` derivs instead.')
-        # initial condition
-        theta0 = self.theta
-        N_theta = self.N_theta
-        D = self.D
-        # calculate l
-        l = self.l__d
-        # JACOBIAN
-        # analytic Jacobian
-        dl = A( self.dl_dtheta__id )
-        # helper function
-        def dth(i):
-            z = zeros( N_theta )
-            z[i] = eps
-            return z
-        # empirical Jacobian
-        edl = np.zeros( (N_theta, D) )
-        for i in range(N_theta):
-            self.theta = theta0 + dth(i)
-            edl[i] = ( self.l__d - l ) / eps
-        # print error
-        err1 = norm( dl - edl ) / norm( dl )
-        print ' '
-        print 'dl norm deviation: %.6f' % err1
-        print ' '
-        # raise error?
-        if error_if_fail and (err1 > error_threshold):
-            raise ValueError('Jacobian of l failed at %.6f' % err1 )
-        # HESSIAN
-        if hessian:
-            raise NotImplementedError()
-        # debug
-        if debug:
-            tracer()
-
-    def check_C_derivatives( self, eps=1e-6, debug=False,
-            error_if_fail=False, error_threshold=0.05, hessian=False ):
-        """ Check derivatives of the prior covariance matrix wrt `theta`. 
-        
-        For both the Jacobian and Hessian, evaluates the analytic derivatives
-        provided by the respective methods `dC_dtheta__idd` and 
-        `d2C_dtheta2__iidd`, and compares with empirical values, obtained from 
-        finite differences method on `C__dd` and `dC_dtheta__iidd` respectively.
-        
-        Typically, this prints out the size of the error between analytic
-        and empirical estimates, as a norm. For example, for the Jacobian 
-        (analytic `aJ` and empirical `eJ` respectively), this computes 
-        norm(aJ - eJ) / norm(aJ). If required, a ValueError can be thrown
-        if the deviation is too large.
-
-        This tests the derivatives at the current value of `theta`.
-
-        Keywords:
-
-        - `eps` : absolute size of step in finite difference method
-
-        - `debug` : drop into IPython debugger after evaluation
-
-        - `error_if_fail` : raise ValueError if the relative deviation
-            is too large
-
-        - `error_threshold` : if `error_if_fail`, only raise ValueError
-            if the relative deviation is greater than this value.
-
-        - `hessian` : whether to test the same for the hessian
-
-        NOTE: Hessian testing not currently implemented.
-        
-        """
-        # can only run this if C is not diagonal
-        if self.C_is_diagonal:
-            raise TypeError('`C` is diagonal: check `L` derivatives instead')
-        # initial condition
-        theta0 = self.theta
-        N_theta = self.N_theta
-        D = self.D
-        # calculate C
-        C = self.C__dd
-        # JACOBIAN
-        # analytic Jacobian
-        dC = A( self.dC_dtheta__idd )
-        # helper function
-        def dth(i):
-            z = zeros( N_theta )
-            z[i] = eps
-            return z
-        # empirical Jacobian
-        edC = np.zeros( (N_theta, D, D) )
-        for i in range(N_theta):
-            self.theta = theta0 + dth(i)
-            edC[i] = ( self.C__idd - C ) / eps
-        # print error
-        err1 = norm( dC - edC ) / norm( dC )
-        print ' '
-        print 'dC norm deviation: %.6f' % err1
-        print ' '
-        # raise error?
-        if error_if_fail and (err1 > error_threshold):
-            raise ValueError('Jacobian of C failed at %.6f' % err1 )
-        # HESSIAN
-        if hessian:
-            raise NotImplementedError()
-        # debug
-        if debug:
-            tracer()
-
-    
-
     """
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
     Solving for the parameter vector, `v`
@@ -1454,6 +1061,10 @@ class Solver( AutoCacherAndReloader ):
             return k__d
         else:
             return dot( R__ed.T, k_star__e )
+
+    @property
+    def k( self ):
+        return self.k__d
 
     def reproject_to_v( self, k__d=None, posterior=None ):
         """ Calculates `v` from `k__d`. Does not change object's state.
@@ -1670,9 +1281,6 @@ class Solver( AutoCacherAndReloader ):
     the mode. If one attempts to access these attributes for non-posterior
     objects, a TypeError will be raised.
 
-    Once the posterior mode and covariance have been calculated, then the
-    approximate marginal likelihood (i.e. evidence) can be calculated.
-
     """
     
     @cached( cskip = ('is_posterior', False, 'negLP_hessian') )
@@ -1706,6 +1314,444 @@ class Solver( AutoCacherAndReloader ):
         # if the dimensionality reduction is rotation + projection
         else:
             return mdot( R__ed.T, Lambda_star__ee, R__ed )
+
+
+
+
+class Solver( SolverFixedTheta ):
+
+    """ Superclass for GLM solvers.
+
+    This should be subclassed to define certain structural priors over
+    the variables.
+
+    """
+
+    """
+    ----------------------------------------------
+    Solving for the hyperparameter vector, `theta`
+    ----------------------------------------------
+    """
+
+    def solve_theta( self, grid_search=False, ftol_per_obs=None, 
+            max_iterations=10, verbose=1, **kw ):
+        """ Optimise for `theta` by maximum marginal likelihood. 
+        
+        Convergence is measured by `ftol_per_obs`. This is multiplied by
+        `self.N_observations` to give a step improvement criterion for 
+        continuing the optimisation. This defaults to `self.ftol_per_obs`
+        if not provided.
+        
+        """
+        # parse tolerance
+        if ftol_per_obs is None:
+            ftol_per_obs = self.ftol_per_obs
+        # do we actually have a theta to solve
+        if self.N_theta == 0:
+            return
+        # parse verbosity
+        self._announcer.thresh_allow( verbose, 1, 'solve_theta' )
+        self._announcer.thresh_allow( verbose, 2, 'calc_posterior' )
+        # initialise
+        self.initialise_theta()
+        best_evidence = -np.inf
+        best_posterior = None
+        # calculate posterior
+        self.calc_posterior( verbose=None, **kw )
+        # current value
+        if hasattr(self, 'posterior' ):
+            try:
+                best_posterior = self.posterior
+                best_evidence = self.posterior.evidence
+                announce_str = 'evidence existing:     %.3f' % best_evidence
+                self.announce( announce_str, prefix='solve_theta' )
+            except (AttributeError, np.linalg.LinAlgError):
+                pass
+        # check that we can actually grid search
+        grid_search = ( grid_search and self.grid_search_theta_available )
+
+        # case 1: set initial conditions by grid search
+        if grid_search:
+            # announce
+            self.announce( 'theta grid search starting', prefix='solve_theta' )
+            # construct grid searching object, `gs`
+            grid_kws = self.grid_search_theta_parameters.copy()
+            grid_kws.update( **kw )
+            gs = GridSearcher( **grid_kws )
+            # run through the grid search
+            while not gs.is_finished:
+                # current `theta` value
+                theta = gs.current_theta
+                self.theta = theta
+                # set the initial value of `v`
+                if best_posterior is not None:
+                    self.v = self.reproject_to_v( posterior=best_posterior )
+                # calculate posterior on `v` for this `theta`
+                self.calc_posterior( verbose=None, **kw )
+                p = self.posterior
+                # evaluate the evidence for this `theta`
+                this_evidence = self.posterior.evidence
+                # prepare announcement
+                announce_str = 'grid search [%d/%d]: ('
+                announce_str = announce_str % (gs.current_count, gs.max_count)
+                announce_str += ('%d,' * len(theta))
+                announce_str = announce_str[:-1] + ')'
+                announce_str = announce_str % tuple(theta)
+                max_len = 30 + 2*len(theta)
+                if len(announce_str) < max_len:
+                    announce_str += ' '*(max_len - len(announce_str))
+                announce_str += ('= %.1f' % this_evidence)
+                # if the evidence is better, keep
+                if this_evidence > best_evidence:
+                    best_posterior = p
+                    best_evidence = this_evidence
+                    announce_str += '    *'
+                # announce
+                self.announce( announce_str, prefix='solve_theta' )
+                # continue
+                gs.next( this_evidence )
+            # we are finished grid search
+            self.announce( 'theta grid search finished', prefix='solve_theta' )
+
+        # case 2: initial condition is current `theta`
+        elif ( hasattr( self, 'posterior' ) and 
+                np.array_equal( self.posterior.theta, self.theta ) ):
+            pass
+
+        # case 3: calculate
+        else:
+            self.calc_posterior( verbose=None, **kw )
+            best_posterior = self.posterior
+            best_evidence = best_posterior.evidence
+                
+        # announce the evidence
+        announce_str = 'evidence initial:     %.3f' % best_evidence
+        self.announce( announce_str, prefix='solve_theta' )
+        # save the posterior
+        self.posterior = best_posterior
+
+        # solve: cycle of maximising local LE
+        for i in range( max_iterations ):
+            # optimise local evidence
+            self.get_next_theta_n()
+            new_theta = self.theta
+            # check that theta has changed
+            old_theta = self.posterior.theta
+            if np.array_equal( new_theta, old_theta ):
+                break
+            # calculate posterior here
+            self.calc_posterior( verbose=None, **kw )
+            # evaluate evidence here
+            new_posterior = self.posterior
+            new_evidence = self.posterior.evidence
+            # report progress
+            announce_str = 'evidence iteration %d: %.3f' % ( i, new_evidence )
+            self.announce( announce_str, prefix='solve_theta' )
+            # if we have made an improvement, keep it
+            evidence_improvement = new_evidence - best_evidence
+            if evidence_improvement > 0:
+                best_posterior = new_posterior
+                best_evidence = new_evidence
+            # if the improvement has been negative, restore, then end
+            if evidence_improvement < 0:
+                self.posterior = best_posterior
+                new_theta = best_posterior.theta
+                new_v = best_posterior.v
+                self.csetattr( 'theta', new_theta )
+                self.csetattr( 'v', new_v )
+                break
+            # if the improvement has been too small, end here
+            if evidence_improvement < (ftol_per_obs * self.N_observations):
+                self.posterior = best_posterior
+                break
+
+        # announce the evidence
+        announce_str = 'evidence final:       %.3f' % best_evidence
+        self.announce( announce_str, prefix='solve_theta' )
+        if best_evidence < -1e10:
+            tracer()
+        # restore verbosity
+        self._announcer.thresh_allow( 
+                verbose, -np.inf, 'solve_theta', 'calc_posterior' )
+    
+    def get_next_theta_n( self, factr=1e10, ftol_per_obs=None ):
+        """ Single step for local evidence approx algorithm.
+
+        In the Park & Pillow (2012) approximation, one walks towards an
+        optimal `theta` by approximating the objective function near
+        `theta_n` as `psi(theta)`, then maximise this approx objective
+        function. The solution becomes the next `theta_n`. This method
+        performs one step in this optimisation procedure, finding, in effect
+        `theta_(n+1)` from `theta_(n)`.
+
+        Keywords:
+
+        - `factr` : convergence factor for 'grad'-based optimisation
+
+        """
+        # parse tolerance
+        if ftol_per_obs is None:
+            ftol_per_obs = self.ftol_per_obs
+        ftol = ftol_per_obs * self.N_observations
+        # functions to minimise
+        # (these are interface functions to the cacher)
+        f = self.cfunction( np.array_equal, 'LE_objective', 'theta' )
+        df = self.cfunction( np.array_equal, 'LE_jacobian', 'theta' )
+        # a copy is necessary as fmin_l_bfgs_b makes changes in place
+        g = lambda x: f( x.copy() )
+        dg = lambda x: df( x.copy() )
+        # reporting during each step
+        def callback( theta, assess_convergence=True ):
+            # set the current value of `theta` (if required)
+            self.csetattr( 'theta', theta )
+            # have we converged
+            last_LE = self._last_LE
+            this_LE = getattr( self, 'LE_objective' )
+            improvement = -(this_LE - last_LE)
+            # if we have converged, break out of the loop
+            if assess_convergence and (improvement < ftol):
+                raise ConvergedUpToFtol()
+            self._last_LE = this_LE
+        # initial condition
+        theta0 = np.array( self.posterior.theta )
+        # boundary conditions
+        bounds = self.bounds_theta
+        self._last_LE = g( theta0 ) #np.inf
+        # run
+        try:
+            theta = fmin_l_bfgs_b( 
+                    g, theta0, fprime=dg, approx_grad=False, bounds=bounds, 
+                    factr=factr, disp=False, callback=callback )[0]
+        except ConvergedUpToFtol:
+            theta = self.theta
+        # save
+        g(theta)
+
+    @property
+    def grid_search_theta_available( self ):
+        """ Can we grid search to find `theta`. """
+        return hasattr( self, 'grid_search_theta_parameters' )
+
+    """
+    ===================
+    Derivative checking
+    ===================
+
+    These are methods to ensure that the provided analytical derivatives
+    are correct, by comparing them with empirically-calculated derivatives.
+
+    """
+
+    def check_LE_derivatives( self, eps=1e-6, debug=False, 
+            error_if_fail=False, error_threshold=0.05, **kw ):
+        """ Check derivatives of the local evidence wrt `theta`.
+        
+        For the Jacobian, evaluates the analytic derivatives provided by
+        the attribute `LE_jacobian` and compares these with the empirical
+        values, obtained from finite differences method on `LE_objective`.
+
+        Typically, this prints out the size of the error between analytic (aJ)
+        and empirical estimates (eJ), as a norm. In particular, this computes 
+        norm(aJ - eJ) / norm(aJ). If required, a ValueError can be thrown
+        if the deviation is too large.
+
+        Keywords:
+
+        - `eps` : absolute size of step in finite difference method
+
+        - `debug` : drop into IPython debugger after evaluation
+
+        - `error_if_fail` : raise ValueError if the relative deviation
+            is too large
+
+        - `error_threshold` : if `error_if_fail`, only raise ValueError
+            if the relative deviation is greater than this value.
+        
+        """
+        N_theta = self.N_theta
+        # evaluate analytic
+        LE = self.LE_objective
+        a = dLE = self.LE_jacobian
+        # evaluate empirical
+        theta0 = np.array( self.theta ).astype(float)
+        e = edLE = np.zeros( N_theta )
+        for i in range( N_theta ):
+            theta = theta0.copy()
+            theta[i] += eps
+            self.theta = theta
+            edLE[i] = ( self.LE_objective - LE) / eps
+        # check Jacobian
+        a[ np.abs(a) < 1e-20 ] = 1e-20
+        e[ np.abs(e) < 1e-20 ] = 1e-20
+        err1 = np.nanmax( np.abs( (a-e)/e ) )
+        err2 = norm( a - e ) / norm( e )
+        print 'LE_jacobian : '
+        print ' '
+        print '   max deviation : %.6f ' % err1
+        print '   norm deviation : %.6f ' % err2
+        print ' '
+        sys.stdout.flush()
+        # raise error?
+        if error_if_fail and (err2 > error_threshold):
+            raise ValueError('Jacobian of LE failed at %.6f' % err2 )
+        # debug
+        if debug:
+            tracer()
+
+    def check_l_derivatives( self, eps=1e-6, debug=False,
+            error_if_fail=False, error_threshold=0.05, hessian=False ):
+        """ Check derivatives of diagonal of prior covariance wrt `theta`. 
+        
+        For both the Jacobian and Hessian, evaluates the analytic derivatives
+        provided by the respective attributes `dl_dtheta__id` and 
+        `d2l_dtheta2__iid`, and compares with empirical values, obtained from 
+        finite differences method on `l__d` and `dl_dtheta__id` respectively.
+        
+        Typically, this prints out the size of the error between analytic
+        and empirical estimates, as a norm. For example, for the Jacobian 
+        (analytic `aJ` and empirical `eJ` respectively), this computes 
+        norm(aJ - eJ) / norm(aJ). If required, a ValueError can be thrown
+        if the deviation is too large.
+
+        This tests the derivatives at the current value of `theta`.
+
+        Keywords:
+
+        - `eps` : absolute size of step in finite difference method
+
+        - `debug` : drop into IPython debugger after evaluation
+
+        - `error_if_fail` : raise ValueError if the relative deviation
+            is too large
+
+        - `error_threshold` : if `error_if_fail`, only raise ValueError
+            if the relative deviation is greater than this value.
+
+        - `hessian` : boolean. whether to check hessian
+
+        NOTE: Hessian testing not currently implemented.
+
+        """
+        # can only run this if C is diagonal
+        if not self.C_is_diagonal:
+            raise TypeError('`C` is not diagonal: check `l` derivs instead.')
+        # initial condition
+        theta0 = self.theta
+        N_theta = self.N_theta
+        D = self.D
+        # calculate l
+        l = self.l__d
+        # JACOBIAN
+        # analytic Jacobian
+        dl = A( self.dl_dtheta__id )
+        # helper function
+        def dth(i):
+            z = zeros( N_theta )
+            z[i] = eps
+            return z
+        # empirical Jacobian
+        edl = np.zeros( (N_theta, D) )
+        for i in range(N_theta):
+            self.theta = theta0 + dth(i)
+            edl[i] = ( self.l__d - l ) / eps
+        # print error
+        err1 = norm( dl - edl ) / norm( dl )
+        print ' '
+        print 'dl norm deviation: %.6f' % err1
+        print ' '
+        # raise error?
+        if error_if_fail and (err1 > error_threshold):
+            raise ValueError('Jacobian of l failed at %.6f' % err1 )
+        # HESSIAN
+        if hessian:
+            raise NotImplementedError()
+        # debug
+        if debug:
+            tracer()
+
+    def check_C_derivatives( self, eps=1e-6, debug=False,
+            error_if_fail=False, error_threshold=0.05, hessian=False ):
+        """ Check derivatives of the prior covariance matrix wrt `theta`. 
+        
+        For both the Jacobian and Hessian, evaluates the analytic derivatives
+        provided by the respective methods `dC_dtheta__idd` and 
+        `d2C_dtheta2__iidd`, and compares with empirical values, obtained from 
+        finite differences method on `C__dd` and `dC_dtheta__iidd` respectively.
+        
+        Typically, this prints out the size of the error between analytic
+        and empirical estimates, as a norm. For example, for the Jacobian 
+        (analytic `aJ` and empirical `eJ` respectively), this computes 
+        norm(aJ - eJ) / norm(aJ). If required, a ValueError can be thrown
+        if the deviation is too large.
+
+        This tests the derivatives at the current value of `theta`.
+
+        Keywords:
+
+        - `eps` : absolute size of step in finite difference method
+
+        - `debug` : drop into IPython debugger after evaluation
+
+        - `error_if_fail` : raise ValueError if the relative deviation
+            is too large
+
+        - `error_threshold` : if `error_if_fail`, only raise ValueError
+            if the relative deviation is greater than this value.
+
+        - `hessian` : whether to test the same for the hessian
+
+        NOTE: Hessian testing not currently implemented.
+        
+        """
+        # can only run this if C is not diagonal
+        if self.C_is_diagonal:
+            raise TypeError('`C` is diagonal: check `L` derivatives instead')
+        # initial condition
+        theta0 = self.theta
+        N_theta = self.N_theta
+        D = self.D
+        # calculate C
+        C = self.C__dd
+        # JACOBIAN
+        # analytic Jacobian
+        dC = A( self.dC_dtheta__idd )
+        # helper function
+        def dth(i):
+            z = zeros( N_theta )
+            z[i] = eps
+            return z
+        # empirical Jacobian
+        edC = np.zeros( (N_theta, D, D) )
+        for i in range(N_theta):
+            self.theta = theta0 + dth(i)
+            edC[i] = ( self.C__idd - C ) / eps
+        # print error
+        err1 = norm( dC - edC ) / norm( dC )
+        print ' '
+        print 'dC norm deviation: %.6f' % err1
+        print ' '
+        # raise error?
+        if error_if_fail and (err1 > error_threshold):
+            raise ValueError('Jacobian of C failed at %.6f' % err1 )
+        # HESSIAN
+        if hessian:
+            raise NotImplementedError()
+        # debug
+        if debug:
+            tracer()
+
+    """
+    =============================
+    Posterior specific attributes
+    =============================
+
+    If one attempts to access these attributes for non-posterior
+    objects, a TypeError will be raised.
+
+    Once the posterior mode and covariance have been calculated, then the
+    approximate marginal likelihood (i.e. evidence) can be calculated.
+
+    """
 
     @cached
     def logdet_Lambdainv_star( Lambdainv_star__ee ):
@@ -2136,9 +2182,6 @@ class Solver( AutoCacherAndReloader ):
                     0.5 * dot( kT_En_minus_Cinv__f, Bk__f ) ])
             # make negative
             return -dpsi__i
-
-
-
 
 """
 ====================
