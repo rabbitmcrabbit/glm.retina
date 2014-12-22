@@ -120,7 +120,7 @@ class SolverFixedTheta( AutoCacherAndReloader ):
     """
 
     def __init__( self, data, solve=False, nonlinearity='exp',
-            testing_proportion=0, initial_conditions=None, 
+            testing_proportion=0, initial_conditions=None, theta=None, 
             announcer=None, verbose=True, empty_copy=False, **kw ):
         """ Create a Solver object, for given data object, `data`.
         
@@ -135,8 +135,14 @@ class SolverFixedTheta( AutoCacherAndReloader ):
         - `testing_proportion` : what fraction of the data should be set aside
             for cross-validation (between 0 and 1)
 
-        - `initial_conditions`: initial values for parameters and/or 
+        - `initial_conditions` : initial values for parameters and/or 
             hyperparameters. Can be a dict or a Solver object.
+
+        - `theta` : initial setting of hyperparameter values, if any. This is 
+            another way to provide initial `theta`. Note that if instantiating
+            a SolverFixedTheta object, it is recommended to manually provide
+            `theta`, otherwise this will default to a class-specific value 
+            that may not be suitable for the given dataset.
 
 
         Verbosity:
@@ -169,7 +175,7 @@ class SolverFixedTheta( AutoCacherAndReloader ):
         else:
             raise ValueError("`nonlinearity` must be 'exp' or 'soft'")
         # parse initial conditions
-        self.parse_initial_conditions( initial_conditions )
+        self.parse_initial_conditions( initial_conditions, theta=theta )
         self.reset()
         # solve, if requested
         if solve:
@@ -248,7 +254,7 @@ class SolverFixedTheta( AutoCacherAndReloader ):
 
     """
 
-    def parse_initial_conditions( self, initial_conditions ):
+    def parse_initial_conditions( self, initial_conditions, theta=None ):
         """ Sets up the initial conditions for the model. """
         # initialise `k` and `theta` to global defaults
         self.initial_conditions = ics = Bunch()
@@ -271,6 +277,13 @@ class SolverFixedTheta( AutoCacherAndReloader ):
                 ics['theta'] = self.recast_theta( initial_conditions )
             except TypeError:
                 pass
+        # parse: `theta` input
+        if theta is not None:
+            if ics['theta'] is self.default_theta0:
+                ics['theta'] = theta
+            else:
+                err_str = 'provided two `theta` values as initial conditions'
+                raise ValueError(err_str)
         # replace any invalid values
         for i in range( self.N_theta ):
             if (ics['theta'][i] is None) or (ics['theta'][i] == np.nan):
