@@ -41,10 +41,9 @@ class SimulatedData( glm.Data ):
         D = self.D = len( k_true )
         # stimulus and response
         X_stim = self.make_X_stim( X_std=X_std )
+        z = dot( X_stim, k_stim_true )
         if add_constant:
-            z = dot( X_stim, k_true[:-1] ) + k_const_true
-        else:
-            z = dot( X_stim, k_true )
+            z += k_const_true
         if nonlinearity == 'exp':
             mu = exp( z )
         elif nonlinearity == 'soft':
@@ -117,11 +116,10 @@ class SimulatedDataHistory( SimulatedData ):
                 prev_spikes = y[ t - self.D_history - 1 : t - 1 ][::-1]
                 mu_history = exp(dot( prev_spikes, k_history ))
             y[t] = poisson( mu[t] * mu_history )
+        # construct X_history
+        X_history = glm.construct_X_history( y, D_history )
         # construct X
-        X_history = np.zeros( (self.T, D_history) )
-        for i in range( D_history ):
-            X_history[ :, i  ] = np.roll( y, i+1 )
-        X = np.hstack([ X_stim, X_history ])
+        X = glm.combine_X( X_stim, X_history )
         # continue initialising
         super( SimulatedData, self ).__init__( 
                 X, y, add_constant=add_constant, **kw )
@@ -131,3 +129,28 @@ class SimulatedDataHistory( SimulatedData ):
         tt = np.arange(40.)
         k_history = -( np.sin(2 * np.pi * tt / (6 * np.sqrt(tt + 1))) * np.exp(-0.5 * (tt/12.)**2 ) ) * 0.01
         return k_history
+
+
+
+class SimulatedData2D( SimulatedData ):
+
+    """ Simulated data, with 2D kernel. """ 
+    
+    def make_k_stim_true( self ):
+        """ Generate stimulus-response relationship for simulation. """
+        # dimensions
+        self.D_x = D_x = 10
+        self.D_y = D_y = 10
+        self.D = D = D_x * D_y + 1 
+        # create kernel
+        i, j = np.meshgrid( np.arange(self.D_x), np.arange(self.D_y), 
+                indexing='ij' )
+        k_stim_true_2D = np.exp(-0.5 * ((j - 3) ** 2 + (i - 5) ** 2))
+        return k_stim_true_2D.flatten()
+
+
+class SimulatedData2DHistory( SimulatedDataHistory, SimulatedData2D ):
+
+    """ Simulated data, with 2D kernel and history. """
+
+        pass

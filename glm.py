@@ -2,10 +2,78 @@ from common import *
 
 
 """
+================
+Helper functions
+================
+"""
+
+
+def construct_X_history( y, D_history ):
+
+    """ Helper function for building history of spike counts. 
+    
+    Arguments:
+
+        - `y` : time series of spike counts (length T)
+
+        - `D_history` : history dimensionality, i.e. how many time steps back 
+            in the past to compute.
+
+
+    Returns a (T x D_history) matrix, `X_history`. 
+    
+    For each time point `t`, the corresponding row of this matrix is:
+        X_history[ t, : ]  =  y[ t-D, t-D+1, ..., t-2, t-1 ]
+
+    
+    """
+
+    # construct
+    T = len(y)
+    X_history = np.zeros( (T, D_history) )
+    for i in range( D_history ):
+        X_history[ :, i  ] = np.roll( y, i+1 )
+    # remove wrap around at beginning
+    for i in range( D_history ):
+        X_history[ i, i: ] = 0
+        X_history = X_history[ :, ::-1]
+    # reverse
+    X_history = X_history[ :, ::-1 ]
+    return X_history
+
+
+def combine_X( *a, **kw ):
+
+    """ Helper function for building the design matrix. 
+
+    Arguments:
+
+        - `X1`, `X2`, ... : individual design matrices to combine
+
+        - `add_constant` : boolean (False). Add a column of constant ones.
+    
+
+    Example usage:
+
+    >>> combine_X( X_stim, X_history, add_constant=True )
+    
+    """
+
+    X = np.hstack(a)
+    add_constant = kw.get('add_constant', False)
+    if add_constant:
+        T = X.shape[0]
+        X = np.hstack([ X, np.ones((T,1)) ])
+    return X
+
+
+
+"""
 =============
 Data class
 =============
 """
+
 
 class Data( AutoReloader ):
 
