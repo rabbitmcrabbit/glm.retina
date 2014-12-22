@@ -868,12 +868,20 @@ class SolverFixedTheta( AutoCacherAndReloader ):
         # evaluate analytic jacobian
         self.v = v0
         LP = self.negLP_objective
+        LL = self.LL_training
+        LPrior = self.LPrior
         dLP = self.negLP_jacobian
+        dLL = self.dLL_training
+        dLPrior = self.dLPrior
         # evaluate empirical jacobian
         edLP = np.zeros( N_v )
+        edLL = np.zeros( N_v )
+        edLPrior = np.zeros( N_v )
         for i in progress.dots( range(N_v), 'empirical jacobian' ):
             self.v = v0 + dv(i)
             edLP[i] = ( self.negLP_objective - LP ) / eps
+            edLL[i] = ( self.LL_training - LL ) / eps
+            edLPrior[i] = ( self.LPrior - LPrior ) / eps
         # restore `v`
         self.v = v0
         # print
