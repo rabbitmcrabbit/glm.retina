@@ -84,73 +84,6 @@ class Data( AutoReloader ):
     def y( self ):
         return self.y__t
 
-    """ Plotting """
-
-    def plot_y( self, mu=None, binsize_sec=None, 
-            draw=True, new_figure=True, return_ax=False, return_fig=False, 
-            **kw ):
-        """ Plot the spike counts over time.
-
-        This will also show the estimated spike counts from the posterior,
-        if this is provided.
-
-        Plotting keywords:
-
-        - `posterior`
-        - `binsize_sec` : Timescale over which to integrate spike counts
-
-        Additional plotting keywords:
-
-        - `draw`: Whether to call `plt.draw` at the end
-        - `new_figure`: Whether to create a new figure instance
-        - `return_ax`: Whether to return the axis object
-        - `return_fig` : Whether to return the figure object
-
-        """
-        # create figure
-        if new_figure:
-            plt.figure(**kw)
-        ax = plt.gca()
-        # bin
-        y = self.y__t
-        if binsize_sec is None:
-            i = np.arange( self.T )
-        else:
-            steps_per_block = int(np.round(self.fs * binsize_sec))
-            T = len(y)
-            n_blocks = int( np.floor( T // steps_per_block ) )
-            T = int( n_blocks * steps_per_block )
-            y = y[:T].reshape( n_blocks, steps_per_block )
-            y = np.mean( y, axis=1 )
-            i = np.arange( n_blocks )
-            maxy = np.max(y)
-        ax.plot(i, y, 'b', lw=1)
-        # prediction
-        if mu is not None:
-            if binsize_sec is not None:
-                y_hat = mu[:T].reshape( n_blocks, steps_per_block )
-                y_hat = np.mean( y_hat, axis=1 )
-            else:
-                y_hat = mu
-            ax.plot(i, y_hat, 'r', lw=3, alpha=0.7)
-            maxy = np.max([y, y_hat])
-        else:
-            maxy = np.max(y)
-        # aesthetics
-        ax.set_ylim(0, maxy * 1.1)
-        ax.set_xlim(0, len(y) - 1)
-        ax.set_xticks([0, len(y)])
-        ax.set_xticklabels([0, int(self.N_sec)])
-        ax.set_yticklabels([])
-        ax.set_xlabel('time (sec)', fontsize=14)
-        # return
-        if draw:
-            plt.draw()
-            plt.show()
-        if return_ax:
-            return ax
-        if return_fig:
-            return fig
 
 
 """
@@ -294,19 +227,6 @@ class Solver( AutoCacherAndReloader ):
         # save
         self.__dict__ = d
 
-    """ Plotting """
-
-    def plot_y( self, posterior=None, **kw ):
-        """ Plot spike counts. See `Data.plot_y` for docstring. 
-        
-        By default, this plots `self.posterior`, unless an alternative
-        posterior is provided.
-        
-        """
-        if posterior is None:
-            posterior = self.posterior
-
-        return self.data.plot_y( posterior, **kw )
 
     """
     ===================
