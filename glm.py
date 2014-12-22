@@ -2365,3 +2365,65 @@ class Ridge( Diagonal_Prior ):
         return [ -l__d ]
 
 
+class Ridge_Stim_ALDs_History( Diagonal_Prior ):
+
+    """ Ridge prior on `k_stim`. ALDs prior on `k_history`. """
+        
+    R_is_identity = False
+    
+    # default variables
+    hyperparameter_names = [ 'rho_stim', 'log_tstd_history', 'rho_history'  ]
+    bounds_theta = [ (-15, 15), (-5, 5), (-15, 15) ]
+    default_theta0 = [0., 1., 0.]
+        
+    grid_search_theta_parameters = { 
+            'bounds':[ [ -14, 14 ], [-4.5, 4.5], [-14, 14] ],
+            'spacing': [ 'linear', 'linear', 'linear' ],
+            'initial': A([ 0., 3., 0. ]),
+            'strategy': '1D two pass',  
+            'grid_size': (10, 10, 10) }
+    
+    """ Prior on `k` """
+    
+    @cached
+    def D_stim( data ):
+        return data.D_stim
+    
+    @cached
+    def D_history( data ):
+        return data.D_history
+    
+    @cached
+    def l__d( theta, D_stim, D_history ):
+        """ Diagonal of prior covariance matrix for `k`. """
+        # parse input
+        rho_stim, log_tstd_history, rho_history = theta
+        tstd = exp( log_tstd_history )
+        # construct components of the diagonal
+        l_stim = exp( -rho_stim ) * ones( D_stim )
+        tt = np.arange( -D_history, 0, dtype=float )
+        l_history = exp( -0.5/(tstd**2) * (tt ** 2) - rho_history )
+        l_const = [10.]        
+        return np.concatenate([ l_stim, l_history, l_const ])
+    
+    @cached
+    def dl_dtheta__id( theta, D_stim, D_history, l__d ):
+        """ Derivative of the diagonal prior covariance matrix. """
+        # parse input
+        rho_stim, log_tstd_history, rho_history = theta
+        tstd = exp( log_tstd_history )
+        # construct components of the diagonal
+        l_stim = exp( -rho_stim ) * ones( D_stim )
+        tt = np.arange( -D_history, 0, dtype=float )
+        l_history = exp( -0.5/(tstd**2) * (tt ** 2) - rho_history )
+        l_const = A([10.])
+        # derivative wrt rho_stim
+        dl_drho_stim = np.concatenate([ -l_stim, 0*l_history, 0*l_const ])
+        # derivative wrt log_tstd_history
+        dl_dlog_tstd_history = np.concatenate([
+                0*l_stim,
+                (tstd ** -2.) * (tt ** 2) * l_history,
+                0*l_const ])
+        # derivative wrt rho_history
+        dl_drho_history = np.concatenate([ 0*l_stim, -l_history, 0*l_const ])
+        return A([ dl_drho_stim, dl_dlog_tstd_history, dl_drho_history ])
