@@ -153,4 +153,4 @@ class SimulatedData2DHistory( SimulatedDataHistory, SimulatedData2D ):
 
     """ Simulated data, with 2D kernel and history. """
 
-        pass
+    pass
