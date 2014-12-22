@@ -94,7 +94,7 @@ class SimulatedDataHistory( SimulatedData ):
         self.D_stim = D_stim = len(k_stim)
         self.D_history = D_history = len(k_history)
         # stimulus driven firing rate
-        X_stim = self.make_X_stim( X_std=X_std )
+        self.X_stim = X_stim = self.make_X_stim( X_std=X_std )
         z = dot( X_stim, k_stim )
         if nonlinearity == 'exp':
             mu = exp( z )
@@ -117,7 +117,7 @@ class SimulatedDataHistory( SimulatedData ):
                 mu_history = exp(dot( prev_spikes, k_history ))
             y[t] = poisson( mu[t] * mu_history )
         # construct X_history
-        X_history = glm.construct_X_history( y, D_history )
+        self.X_history = X_history = glm.construct_X_history( y, D_history )
         # construct X
         X = glm.combine_X( X_stim, X_history )
         # continue initialising
